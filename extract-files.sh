@@ -1,7 +1,7 @@
 #!/bin/sh
 
-VENDOR=wiko
-DEVICE=stairway
+VENDOR=huawei
+DEVICE=g700
 
 BASE=../../../vendor/$VENDOR/$DEVICE/proprietary
 

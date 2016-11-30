@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-DEVICE_FOLDER := device/wiko/stairway
+DEVICE_FOLDER := device/huawei/g700
 
--include vendor/wiko/stairway/BoardConfigVendor.mk
+-include vendor/huawei/g700/BoardConfigVendor.mk
 
 # board
 TARGET_BOARD_PLATFORM := mt6589
@@ -26,14 +26,15 @@ TARGET_ARCH_VARIANT := armv7-a-neon
 TARGET_CPU_VARIANT := cortex-a7
 
 # blob hacks
-COMMON_GLOBAL_CFLAGS += -DDISABLE_HW_ID_MATCH_CHECK
+COMMON_GLOBAL_CFLAGS += -DDISABLE_HW_ID_MATCH_CHECK -DMTK_MT6589 -DMTK_G_MT6589 -DMTK_HARDWARE
+COMMON_GLOBAL_CPPFLAGS += -DDISABLE_HW_ID_MATCH_CHECK -DMTK_MT6589 -DMTK_G_MT6589 -DMTK_HARDWARE
 TARGET_RUNNING_WITHOUT_SYNC_FRAMEWORK := true
 
 # BT
 BOARD_HAVE_BLUETOOTH := true
 BOARD_HAVE_BLUETOOTH_MTK := true
 BOARD_BLUETOOTH_DOES_NOT_USE_RFKILL := true
-BOARD_BLUETOOTH_BDROID_BUILDCFG_INCLUDE_DIR := device/wiko/stairway/bluetooth
+BOARD_BLUETOOTH_BDROID_BUILDCFG_INCLUDE_DIR := device/huawei/g700/bluetooth
 
 # power
 TARGET_POWERHAL_VARIANT := cm
@@ -43,7 +44,7 @@ TARGET_NO_BOOTLOADER := true
 BOARD_CUSTOM_BOOTIMG_MK := $(DEVICE_FOLDER)/boot.mk
 
 # EGL settings
-BOARD_EGL_CFG := device/wiko/stairway/egl.cfg
+BOARD_EGL_CFG := device/huawei/g700/egl.cfg
 USE_OPENGL_RENDERER := true
 BOARD_EGL_WORKAROUND_BUG_10194508 := true
 
@@ -77,7 +78,7 @@ WIFI_DRIVER_FW_PATH_AP:=AP
 WIFI_DRIVER_FW_PATH_P2P:=P2P
 
 # telephony
-BOARD_RIL_CLASS := ../../../device/wiko/stairway/ril/
+BOARD_RIL_CLASS := ../../../device/huawei/g700/ril/
 
 # allow more than one lun file
 TARGET_USE_CUSTOM_LUN_FILE_PATH := "/sys/devices/virtual/android_usb/android0/f_mass_storage/lun%d/file"

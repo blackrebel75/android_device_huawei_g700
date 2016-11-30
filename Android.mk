@@ -22,6 +22,6 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ifeq ($(TARGET_DEVICE),stairway)
+ifeq ($(TARGET_DEVICE),g700)
 include $(call all-makefiles-under,$(LOCAL_PATH))
 endif
