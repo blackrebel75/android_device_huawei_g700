@@ -3,6 +3,7 @@ import init.modem.rc
 import init.protect.rc
 
 on early-init
+    setenforce 0
     mount debugfs /sys/kernel/debug /sys/kernel/debug
 
 on boot
@@ -10,21 +11,35 @@ on boot
     chown root radio /proc/cmdline
 
 on init  
+    mkdir /mnt/shell/emulated 0700 shell shell
+    mkdir /storage 0550 system sdcard_r
+    mkdir /storage/emulated 0555 root root
+
+    #External storage directories
     mkdir /mnt/media_rw/sdcard0 0700 media_rw media_rw
     mkdir /mnt/media_rw/sdcard1 0700 media_rw media_rw
-    mkdir /storage/sdcard0 0700 root root
+    mkdir /storage/usbdisk 0000 system system
+    mkdir /mnt/media_rw/usbdisk 0700 media_rw media_rw
+
+#    mkdir /storage/sdcard0 0700 root root
     mkdir /storage/sdcard1 0700 root root
+    mkdir /storage/usbdisk 0700 root root
 
-    symlink /storage/sdcard0 /mnt/emmc
-    symlink /storage/sdcard0 /emmc
-    symlink /storage/sdcard1 /sdcard
-    symlink /storage/sdcard1 /mnt/sdcard
+    export EXTERNAL_STORAGE /storage/emulated/legacy
+    export SECONDARY_STORAGE /storage/sdcard1:/storage/usbdisk
+    export EMULATED_STORAGE_SOURCE /mnt/shell/emulated
+    export EMULATED_STORAGE_TARGET /storage/emulated
 
-    export EXTERNAL_STORAGE /storage/sdcard0
-    export SECONDARY_STORAGE /storage/sdcard1
-
-    mkdir /storage/usbdisk0 0700 root root
-    mkdir /mnt/media_rw/usbdisk0 0700 media_rw media_rw
+    # Support legacy paths
+    symlink /storage/emulated/legacy /sdcard
+    symlink /storage/emulated/legacy /mnt/sdcard
+    symlink /storage/emulated/legacy /storage/sdcard0
+    symlink /mnt/shell/emulated/0 /storage/emulated/legacy
+    symlink /storage/sdcard1 /extSdCard
+    symlink /storage/sdcard1 /mnt/extSdCard
+    symlink /storage/sdcard1 /external_sd
+    symlink /storage/usbdisk /usbdisk
+    symlink /storage/usbdisk /mnt/usbdisk
 
     mkdir /cache 0771 system cache
 
@@ -49,11 +64,11 @@ on fs
     chmod 0771 /protect_s
 
     # SGX
-    insmod /system/lib/modules/pvrsrvkm.ko
-    insmod /system/lib/modules/mtklfb.ko
+#    insmod /system/lib/modules/pvrsrvkm.ko
+#    insmod /system/lib/modules/mtklfb.ko
 
     # device info /proc interface
-    insmod /system/lib/modules/devinfo.ko
+#    insmod /system/lib/modules/devinfo.ko
     exec /system/xbin/mknod /dev/devmap c 196 0
     chmod 0444 /dev/devmap
     chown root media /dev/devmap
@@ -63,6 +78,9 @@ on fs
 
 on post-fs-data
     setprop vold.post_fs_data_done 1
+    # we will remap this as /mnt/sdcard with the sdcard fuse tool
+    mkdir /data/media 0775 media_rw media_rw
+    chown media_rw media_rw /data/media
 
     # create dalvik-cache and double-check the perms, so as to enforce our permissions
     mkdir /data/dalvik-cache 0771 system system
@@ -207,7 +225,7 @@ on post-fs-data
     mkdir /data/misc/ppp 0770 bluetooth net_bt
 
     # Android SEC related device nodes
-    insmod /system/lib/modules/sec.ko
+#    insmod /system/lib/modules/sec.ko
     exec /system/xbin/mknod /dev/sec c 182 0
     chmod 0660 /dev/sec
     chown root system /dev/sec
@@ -218,7 +236,7 @@ on post-fs-data
     chown system media /dev/fm
 
     # device apc settings
-    insmod /system/lib/modules/devapc.ko
+#    insmod /system/lib/modules/devapc.ko
 
     #/dev/ttyMT2 for 662x_launcher
     chmod 0660 /dev/ttyMT2
@@ -311,9 +329,9 @@ on post-fs-data
     chmod 0660 /dev/kd_camera_hw_bus2
     chmod 0660 /dev/FM50AF
     chmod 0660 /dev/CAM_CAL_DRV
-    chmod 0660 /dev/IMX135AF
-    chmod 0660 /dev/IMX091AF
-    chmod 0660 /dev/IMX092AF
+    chmod 0660 /dev/OV8825AF
+    chmod 0660 /dev/FM50AF
+    chmod 0660 /dev/DW9718AF
 
     chown system camera /dev/camera-sysram
     chown system camera /dev/camera-isp
@@ -323,9 +341,9 @@ on post-fs-data
     chown system camera /dev/kd_camera_hw_bus2
     chown system camera /dev/FM50AF
     chown system camera /dev/CAM_CAL_DRV
-    chown system camera /dev/IMX135AF
-    chown system camera /dev/IMX091AF
-    chown system camera /dev/IMX092AF
+    chown system camera /dev/OV8825AF
+    chown system camera /dev/FM50AF
+    chown system camera /dev/DW9718AF
 
     #MATV
     chmod 0660 /dev/MATV
@@ -597,14 +615,32 @@ service mnld /system/xbin/mnld
     disabled
 
 # virtual sdcard daemon running as media_rw (1023)
-service fuse_sdcard0 /system/bin/sdcard -u 1023 -g 1023 /mnt/media_rw/sdcard0 /storage/sdcard0
+service sdcard /system/bin/sdcard -u 1023 -g 1023 -l /data/media /mnt/shell/emulated
+    class late_start
+#    oneshot
+
+#service fuse_sdcard0 /system/bin/sdcard -u 1023 -g 1023 -d /mnt/media_rw/sdcard0 /storage/sdcard0
+#    class late_start
+#    disabled
+
+service fuse_sdcard1 /system/bin/sdcard -u 1023 -g 1023 -d /mnt/media_rw/sdcard1 /storage/sdcard1
     class late_start
     disabled
 
-service fuse_sdcard1 /system/bin/sdcard -u 1023 -g 1023 /mnt/media_rw/sdcard1 /storage/sdcard1
+service fuse_usbdisk /system/bin/sdcard -u 1023 -g 1023 /mnt/media_rw/usbdisk /storage/usbdisk
     class late_start
     disabled
+on property:ro.fuse_sdcard=true
+    start sdcard
 
-service fuse_usbdisk0 /system/bin/sdcard -u 1023 -g 1023 -d /mnt/media_rw/usbdisk0 /storage/usbdisk0
-    class late_start
-    disabled
+# Binding fuse mount point to /storage/emulated/legacy
+#on property:init.svc.sdcard=running
+#    wait /mnt/shell/emulated/0
+#    mount none /mnt/shell/emulated/0 /storage/emulated/legacy bind
+
+# This will make sure that sdcard service starts as late_start.
+on nonencrypted
+    setprop ro.fuse_sdcard ${persist.fuse_sdcard}
+
+on property:vold.decrypt=trigger_restart_framework
+    setprop ro.fuse_sdcard ${persist.fuse_sdcard}

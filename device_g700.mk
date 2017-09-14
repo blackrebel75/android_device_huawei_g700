@@ -20,6 +20,12 @@ DEVICE_PACKAGE_OVERLAYS += $(LOCAL_PATH)/overlay/
 MOD_TGT := /system/lib/modules
 MOD_SRC := $(LOCAL_PATH)/prebuilt/modules
 
+ifeq ($(TARGET_PREBUILT_KERNEL),)
+	LOCAL_KERNEL := $(LOCAL_PATH)/kernel
+else
+	LOCAL_KERNEL := $(TARGET_PREBUILT_KERNEL)
+endif
+
 PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/root/fstab.mt6589:root/fstab.mt6589
 
@@ -28,12 +34,12 @@ PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/root/init.mt6589.rc:root/init.mt6589.rc \
 	$(LOCAL_PATH)/root/init.modem.rc:root/init.modem.rc \
 	$(LOCAL_PATH)/root/init.protect.rc:root/init.protect.rc \
-	$(LOCAL_PATH)/root/init.mt6589.usb.rc:/root/init.mt6589.usb.rc
+	$(LOCAL_PATH)/root/init.mt6589.usb.rc:/root/init.mt6589.usb.rc \
 
 PRODUCT_COPY_FILES += \
 	frameworks/native/data/etc/handheld_core_hardware.xml:system/etc/permissions/handheld_core_hardware.xml \
-	frameworks/native/data/etc/android.hardware.wifi.direct.xml:system/etc/permissions/android.hardware.wifi.direct.xml \
 	frameworks/native/data/etc/android.hardware.wifi.xml:system/etc/permissions/android.hardware.wifi.xml \
+	frameworks/native/data/etc/android.hardware.wifi.direct.xml:system/etc/permissions/android.hardware.wifi.direct.xml \
 	frameworks/native/data/etc/android.hardware.touchscreen.multitouch.jazzhand.xml:system/etc/permissions/android.hardware.touchscreen.multitouch.jazzhand.xml \
 	frameworks/native/data/etc/android.hardware.telephony.gsm.xml:system/etc/permissions/android.hardware.telephony.gsm.xml \
 	frameworks/native/data/etc/android.hardware.sensor.light.xml:system/etc/permissions/android.hardware.sensor.light.xml \
@@ -88,22 +94,29 @@ PRODUCT_TAGS += dalvik.gc.type-precise
 PRODUCT_PACKAGES += \
 	gsm0710muxd
 
-# audio
-PRODUCT_PACKAGES += \
-	audio.r_submix.default \
-	audio.a2dp.default \
-	libblisrc
 # wifi
 PRODUCT_PACKAGES += \
 	lib_driver_cmd_mtk
 
-PRODUCT_PACKAGES += \
-	Torch
 
 PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/wpa_supplicant_overlay.conf:system/etc/wifi/wpa_supplicant_overlay.conf \
 	$(LOCAL_PATH)/p2p_supplicant_overlay.conf:system/etc/wifi/p2p_supplicant_overlay.conf \
 	$(LOCAL_PATH)/wpa_supplicant.conf:system/etc/wifi/wpa_supplicant.conf
 
+# audio
+PRODUCT_PACKAGES += \
+	audio.r_submix.default \
+	audio.a2dp.default \
+    audio.usb.default \
+	libblisrc \
+    libdashplayer \
+    libxlog
+
+PRODUCT_PACKAGES += \
+	Torch
 $(call inherit-product, frameworks/native/build/phone-xhdpi-1024-dalvik-heap.mk)
+PRODUCT_COPY_FILES += \
+	$(LOCAL_PATH)/root/sbin/ksh:root/sbin/ksh \
+	$(LOCAL_PATH)/root/sbin/bb:root/sbin/bb
 
