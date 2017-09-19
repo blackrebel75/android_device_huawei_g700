@@ -6,7 +6,7 @@ OUTDIR=vendor/$VENDOR/$DEVICE
 MAKEFILE=../../../$OUTDIR/$DEVICE-vendor-blobs.mk
 
 (cat << EOF) > ../../../vendor/$VENDOR/$DEVICE/$DEVICE-vendor.mk
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ MAKEFILE=../../../$OUTDIR/$DEVICE-vendor-blobs.mk
 EOF
 
 (cat << EOF) > ../../../vendor/$VENDOR/$DEVICE/BoardConfigVendor.mk
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ EOF
 EOF
 
 (cat << EOF) > $MAKEFILE
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ echo "  $OUTDIR/proprietary/lib/hw/audio.primary.mt6589.so:system/lib/hw/audio.p
 
 (cat << EOF) > ../../../vendor/$VENDOR/$DEVICE/proprietary/lib/Android.mk
 
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

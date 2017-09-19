@@ -25,8 +25,12 @@ $(INSTALLED_KERNEL_TARGET).mtk.header: $(INSTALLED_KERNEL_TARGET)
 		$(call make_header, $$((size)), "KERNEL", $@)
 $(INSTALLED_KERNEL_TARGET).mtk: $(INSTALLED_KERNEL_TARGET).mtk.header
 	$(call pretty,"Adding MTK header to kernel.")
-	cat $(INSTALLED_KERNEL_TARGET).mtk.header $(INSTALLED_KERNEL_TARGET) \
-		> $@
+	cat $(INSTALLED_KERNEL_TARGET) > $@
+	
+INSTALLED_RAMDISK_TARGET := $(BUILT_RAMDISK_TARGET)
+$(INSTALLED_RAMDISK_TARGET): $(MKBOOTFS) $(INTERNAL_RAMDISK_FILES) | $(MINIGZIP)
+	$(call pretty,"Target ram disk: $@")
+	$(hide) $(MKBOOTFS) $(TARGET_ROOT_OUT) | $(MINIGZIP) > $@
 
 $(INSTALLED_RAMDISK_TARGET).mtk.header: $(INSTALLED_RAMDISK_TARGET)
 	size=$$($(call get-file-size,$(INSTALLED_RAMDISK_TARGET))); \
@@ -41,7 +45,7 @@ $(PRODUCT_OUT)/recovery_kernel.mtk.header: $(recovery_kernel)
 		$(call make_header, $$((size)), "KERNEL", $@)
 $(PRODUCT_OUT)/recovery_kernel.mtk: $(PRODUCT_OUT)/recovery_kernel.mtk.header
 	$(call pretty,"Adding MTK header to recovery kernel.")
-	cat $(PRODUCT_OUT)/recovery_kernel.mtk.header $(recovery_kernel) > $@
+	cat $(recovery_kernel) > $@
 
 $(recovery_ramdisk).mtk.header: $(recovery_ramdisk)
 	size=$$($(call get-file-size,$(recovery_ramdisk))); \

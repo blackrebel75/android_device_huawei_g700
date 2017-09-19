@@ -14,12 +14,14 @@ on post-fs-data
     # xplod: this is not in the original mtk file... But I have no
     # idea what kind of sorcery normally sets them
     chown ccci ccci /dev/ccci_fs
+    chown ccci ccci /dev/ccci2_fs
     chown ccci ccci /dev/ccci_ioctl0
     chown ccci ccci /dev/ccci_ioctl1
     chown ccci ccci /dev/ccci_ipc_1220_0
     chown ccci ccci /dev/ccci_md_log_rx
     chown ccci ccci /dev/ccci_md_log_tx
     chown ccci ccci /dev/ccci_monitor
+    chown ccci ccci /dev/ccci2_monitor
     chown ccci ccci /dev/ccci_pcm_rx
     chown ccci ccci /dev/ccci_pcm_tx
     chown ccci ccci /dev/ccci_uem_rx

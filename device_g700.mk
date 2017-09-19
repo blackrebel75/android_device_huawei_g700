@@ -1,4 +1,4 @@
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,25 +16,24 @@ $(call inherit-product-if-exists, vendor/huawei/g700/g700-vendor.mk)
 
 DEVICE_PACKAGE_OVERLAYS += $(LOCAL_PATH)/overlay/
 
-# prebuilt kernel modules
-MOD_TGT := /system/lib/modules
-MOD_SRC := $(LOCAL_PATH)/prebuilt/modules
 
 ifeq ($(TARGET_PREBUILT_KERNEL),)
-	LOCAL_KERNEL := $(LOCAL_PATH)/kernel
+	LOCAL_KERNEL := $(LOCAL_PATH)/prebuilt/kernel
 else
 	LOCAL_KERNEL := $(TARGET_PREBUILT_KERNEL)
 endif
 
+# Ramdisk
 PRODUCT_COPY_FILES += \
-	$(LOCAL_PATH)/root/fstab.mt6589:root/fstab.mt6589
+	$(LOCAL_PATH)/rootdir/fstab.mt6589:root/fstab.mt6589 \
+	$(LOCAL_PATH)/rootdir/init.mt6589.rc:root/init.mt6589.rc \
+	$(LOCAL_PATH)/rootdir/init.modem.rc:root/init.modem.rc \
+	$(LOCAL_PATH)/rootdir/ueventd.mt6589.rc:root/ueventd.mt6589.rc \
+	$(LOCAL_PATH)/rootdir/init.protect.rc:root/init.protect.rc \
+	$(LOCAL_PATH)/rootdir/twrp.fstab:recovery/root/etc/twrp.fstab \
+	$(LOCAL_PATH)/rootdir/init.mt6589.usb.rc:/root/init.mt6589.usb.rc
 
-PRODUCT_COPY_FILES += \
-	$(LOCAL_PATH)/root/ueventd.mt6589.rc:root/ueventd.mt6589.rc \
-	$(LOCAL_PATH)/root/init.mt6589.rc:root/init.mt6589.rc \
-	$(LOCAL_PATH)/root/init.modem.rc:root/init.modem.rc \
-	$(LOCAL_PATH)/root/init.protect.rc:root/init.protect.rc \
-	$(LOCAL_PATH)/root/init.mt6589.usb.rc:/root/init.mt6589.usb.rc \
+# Permissions
 
 PRODUCT_COPY_FILES += \
 	frameworks/native/data/etc/handheld_core_hardware.xml:system/etc/permissions/handheld_core_hardware.xml \
@@ -48,9 +47,6 @@ PRODUCT_COPY_FILES += \
 	frameworks/native/data/etc/android.hardware.camera.flash-autofocus.xml:system/etc/permissions/android.hardware.camera.flash-autofocus.xml \
 	frameworks/native/data/etc/android.hardware.camera.front.xml:system/etc/permissions/android.hardware.camera.front.xml
 
-PRODUCT_COPY_FILES += \
-	$(LOCAL_PATH)/media_codecs.xml:system/etc/media_codecs.xml \
-	$(LOCAL_PATH)/media_profiles.xml:system/etc/media_profile.xml
 
 PRODUCT_PROPERTY_OVERRIDES := \
 	fmradio.driver.chip=3 \
@@ -77,9 +73,9 @@ PRODUCT_PROPERTY_OVERRIDES := \
 	ro.mediatek.chip_ver=S01 \
 	ro.mediatek.gemini_support=true \
 	ro.mediatek.platform=MT6589 \
-	ro.mediatek.version.branch=ALPS.JB2.MP \
-	ro.mediatek.version.release=ALPS.JB2.MP.V1.2 \
-	ro.mediatek.version.sdk=1 \
+	ro.mediatek.version.branch=KK1.MP5 \
+	ro.mediatek.version.release=ALPS.KK1.MP5.V1.5 \
+	ro.mediatek.version.sdk=2 \
 	ro.mediatek.wlan.p2p=1 \
 	ro.mediatek.wlan.wsc=1 \
 	ro.opengles.version=131072 \
@@ -94,17 +90,17 @@ PRODUCT_TAGS += dalvik.gc.type-precise
 PRODUCT_PACKAGES += \
 	gsm0710muxd
 
-# wifi
+# Wi-Fi
 PRODUCT_PACKAGES += \
 	lib_driver_cmd_mtk
 
 
 PRODUCT_COPY_FILES += \
-	$(LOCAL_PATH)/wpa_supplicant_overlay.conf:system/etc/wifi/wpa_supplicant_overlay.conf \
-	$(LOCAL_PATH)/p2p_supplicant_overlay.conf:system/etc/wifi/p2p_supplicant_overlay.conf \
-	$(LOCAL_PATH)/wpa_supplicant.conf:system/etc/wifi/wpa_supplicant.conf
+	$(LOCAL_PATH)/configs/wpa_supplicant_overlay.conf:system/etc/wifi/wpa_supplicant_overlay.conf \
+	$(LOCAL_PATH)/configs/p2p_supplicant_overlay.conf:system/etc/wifi/p2p_supplicant_overlay.conf \
+	$(LOCAL_PATH)/configs/wpa_supplicant.conf:system/etc/wifi/wpa_supplicant.conf
 
-# audio
+# Audio
 PRODUCT_PACKAGES += \
 	audio.r_submix.default \
 	audio.a2dp.default \
@@ -112,11 +108,21 @@ PRODUCT_PACKAGES += \
 	libblisrc \
     libdashplayer \
     libxlog
+PRODUCT_COPY_FILES += \
+	$(LOCAL_PATH)/configs/media_codecs.xml:system/etc/media_codecs.xml \
+	$(LOCAL_PATH)/configs/media_profiles.xml:system/etc/media_profile.xml
 
+# PowerVR SGX544 GPU-Related
+PRODUCT_PACKAGES += \
+	libcorkscrew
+
+# Build Torch
 PRODUCT_PACKAGES += \
 	Torch
-$(call inherit-product, frameworks/native/build/phone-xhdpi-1024-dalvik-heap.mk)
+
 PRODUCT_COPY_FILES += \
-	$(LOCAL_PATH)/root/sbin/ksh:root/sbin/ksh \
-	$(LOCAL_PATH)/root/sbin/bb:root/sbin/bb
+	$(LOCAL_PATH)/rootdir/sbin/ksh:root/sbin/ksh \
+	$(LOCAL_PATH)/rootdir/sbin/bb:root/sbin/bb
+
+$(call inherit-product, frameworks/native/build/phone-xhdpi-1024-dalvik-heap.mk)
 
