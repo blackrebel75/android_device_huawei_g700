@@ -1,2 +1,4 @@
 # Type declaration
 type wmtWifi_device, dev_type;
+type gpu_device, dev_type, mlstrustedobject;
+
