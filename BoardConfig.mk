@@ -20,6 +20,7 @@ DEVICE_FOLDER := device/huawei/g700
 TARGET_BOARD_PLATFORM := mt6589
 TARGET_ARCH := arm
 TARGET_CPU_ABI := armeabi-v7a
+TARGET_ARCH_ABI := armeabi-v7a
 TARGET_CPU_ABI2 := armeabi
 TARGET_CPU_SMP := true
 TARGET_ARCH_VARIANT := armv7-a-neon
@@ -41,11 +42,26 @@ MTK_DP_FRAMEWORK := yes
 MTK_HWC_VERSION := 1.2
 MTK_ROOT := mediatek
 MTK_PLATFORM := MT6589
+
+#Video and codec
 COMMON_GLOBAL_CFLAGS += -DMTK_VIDEO_HEVC_SUPPORT
 COMMON_GLOBAL_CPPFLAGS += -DMTK_VIDEO_HEVC_SUPPORT
+BOARD_USES_6575_MFV_HW := true
+USES_MTK_OMX_CORE := true
+USES_CACHE_PMEM := true
+BOARD_USES_6575_HW := true
+BOARD_USES_MTK_JPEG_HW_DECODER := true
+BOARD_USES_MTK_VPX_DEC := true
+#mfg
+MFG_ENABLE_GRALLOC_PMEM := true
+BOARD_ENABLE_MFG_HARDWARE := true
+MFG_HALCOMPOSITION_BYPASS := false
+#lcd hw
+BOARD_USES_YUSU_LCD_HW_OVERLAY := true
+BOARD_USES_ARGB8888_FB := true
 
 BOARD_HAS_MTK_HARDWARE := true
-BOARD_NEEDS_OLD_HWC_API := true
+#BOARD_NEEDS_OLD_HWC_API := true
 
 # BT
 BOARD_HAVE_BLUETOOTH := true
@@ -58,6 +74,8 @@ TARGET_POWERHAL_VARIANT := cm
 
 # boot
 TARGET_NO_BOOTLOADER := true
+BOARD_MKBOOTIMG_ARGS := --board 1336460062
+BOARD_CUSTOM_BOOTIMG := true
 
 # EGL settings
 BOARD_EGL_CFG := device/huawei/g700/configs/egl.cfg
@@ -118,6 +136,7 @@ BOARD_SEPOLICY_DIRS += \
 BOARD_SEPOLICY_UNION += \
     file_contexts \
     device.te \
+    pvrsrvctl.te \
     netd.te
 
 # TWRP
@@ -134,3 +153,15 @@ TW_INTERNAL_STORAGE_PATH := "/sdcard"
 TW_INTERNAL_STORAGE_MOUNT_POINT := "sdcard"
 TW_EXTERNAL_STORAGE_PATH := "/external_sd"
 TW_EXTERNAL_STORAGE_MOUNT_POINT := "external_sd"
+
+# Hack for build
+$(shell mkdir -p $(OUT)/obj/SHARED_LIBRARIES/libdpframework_intermediates/)
+$(shell touch $(OUT)/obj/SHARED_LIBRARIES/libdpframework_intermediates/export_includes)
+$(shell mkdir -p $(OUT)/obj/SHARED_LIBRARIES/libcustom_prop_intermediates/)
+$(shell touch $(OUT)/obj/SHARED_LIBRARIES/libcustom_prop_intermediates/export_includes)
+$(shell mkdir -p $(OUT)/obj/SHARED_LIBRARIES/libstagefright_memutil_intermediates/)
+$(shell touch $(OUT)/obj/SHARED_LIBRARIES/libstagefright_memutil_intermediates/export_includes)
+$(shell mkdir -p $(OUT)/obj/SHARED_LIBRARIES/libvcodecdrv_intermediates/)
+$(shell touch $(OUT)/obj/SHARED_LIBRARIES/libvcodecdrv_intermediates/export_includes)
+# Hack for use prebuilt libwebviewchromium
+PRODUCT_PREBUILT_WEBVIEWCHROMIUM := no
