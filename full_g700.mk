@@ -22,6 +22,6 @@ PRODUCT_AAPT_PREF_CONFIG := hdpi
 
 # Discard inherited values and use our own instead.
 PRODUCT_NAME := full_g700
-PRODUCT_DEVICE := g700
-PRODUCT_BRAND := Android
+PRODUCT_DEVICE := G700
+PRODUCT_BRAND := Huawei
 PRODUCT_MODEL := G700

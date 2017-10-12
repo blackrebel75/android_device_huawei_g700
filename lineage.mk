@@ -20,7 +20,7 @@ $(call inherit-product, vendor/cm/config/common_full_phone.mk)
 TARGET_SCREEN_HEIGHT := 1280
 TARGET_SCREEN_WIDTH := 720
 
-PRODUCT_NAME := cm_g700
+PRODUCT_NAME := lineage_g700
 PRODUCT_DEVICE := g700
 PRODUCT_MODEL := huawei g700
 PRODUCT_RELEASE_NAME := g700
