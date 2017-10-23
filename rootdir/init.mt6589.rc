@@ -424,6 +424,20 @@ on post-fs-data
     chown system system /proc/wmt_tm/wmt_val
     chown system system /proc/wmt_tm/wfd_stat
 
+on charger
+    class_start charger
+
+service healthd-charger /sbin/healthd -n
+    class charger
+    critical
+    seclabel u:r:healthd:s0
+
+service ipod /system/bin/ipod
+    user root
+    group root
+    socket ipohctl stream 0660 root root
+    disabled
+
 # SGX init
 service pvrsrvctl /system/vendor/bin/pvrsrvctl --no-module --start
     class main
