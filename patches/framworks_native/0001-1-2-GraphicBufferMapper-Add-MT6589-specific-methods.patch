@@ -1,0 +1,100 @@
+From 0800dce4f687ed74f987ae41469705207f8735ed Mon Sep 17 00:00:00 2001
+From: xplodwild <xplod@ouverta.fr>
+Date: Tue, 8 Oct 2013 23:07:57 +0200
+Subject: [PATCH] [1/2] GraphicBufferMapper: Add MT6589-specific methods
+
+Change-Id: I64fb81c32430dac07fcd7a16714f073390739e4b
+---
+ include/ui/GraphicBufferMapper.h |  9 +++++++++
+ libs/ui/Android.mk               |  4 ++++
+ libs/ui/GraphicBufferMapper.cpp  | 25 +++++++++++++++++++++++++
+ 3 files changed, 38 insertions(+)
+
+diff --git a/include/ui/GraphicBufferMapper.h b/include/ui/GraphicBufferMapper.h
+index 0ffc582cb..e10492273 100644
+--- a/include/ui/GraphicBufferMapper.h
++++ b/include/ui/GraphicBufferMapper.h
+@@ -62,6 +62,10 @@ public:
+     status_t getphys(buffer_handle_t handle, void** paddr);
+ #endif
+ 
++#ifdef MTK_MT6589
++    status_t getIonFd(buffer_handle_t handle, int *idx, int *num);
++#endif
++
+     // dumps information about the mapping of this handle
+     void dump(buffer_handle_t handle);
+ 
+@@ -69,6 +73,11 @@ private:
+     friend class Singleton<GraphicBufferMapper>;
+     GraphicBufferMapper();
+     gralloc_module_t const *mAllocMod;
++
++#ifdef MTK_MT6589
++    ~GraphicBufferMapper();
++    extra_device_t *mExtraDev;
++#endif
+ };
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/libs/ui/Android.mk b/libs/ui/Android.mk
+index 299167168..045d3c617 100644
+--- a/libs/ui/Android.mk
++++ b/libs/ui/Android.mk
+@@ -42,6 +42,10 @@ ifeq ($(BOARD_HAVE_PIXEL_FORMAT_INFO),true)
+ LOCAL_CFLAGS += -DHAVE_PIXEL_FORMAT_INFO
+ endif
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++LOCAL_CFLAGS += -DMTK_MT6589
++endif
++
+ LOCAL_MODULE:= libui
+ 
+ include $(BUILD_SHARED_LIBRARY)
+diff --git a/libs/ui/GraphicBufferMapper.cpp b/libs/ui/GraphicBufferMapper.cpp
+index ce76e7acb..f9396070c 100644
+--- a/libs/ui/GraphicBufferMapper.cpp
++++ b/libs/ui/GraphicBufferMapper.cpp
+@@ -48,6 +48,13 @@ GraphicBufferMapper::GraphicBufferMapper()
+     }
+ }
+ 
++#ifdef MTK_MT6589
++GraphicBufferMapper::~GraphicBufferMapper()
++{
++    gralloc_extra_close(mExtraDev);
++}
++#endif
++
+ status_t GraphicBufferMapper::registerBuffer(buffer_handle_t handle)
+ {
+     ATRACE_CALL();
+@@ -191,6 +198,24 @@ status_t GraphicBufferMapper::getphys(buffer_handle_t handle, void** paddr)
+ }
+ #endif
+ 
++#ifdef MTK_MT6589
++status_t GraphicBufferMapper::getIonFd(buffer_handle_t handle, int *idx, int *num)
++{
++    ATRACE_CALL();
++    status_t err;
++
++    if (!mExtraDev) {
++        ALOGE("gralloc extra device is not supported");
++        return INVALID_OPERATION;
++    }
++
++    err = mExtraDev->getIonFd(mExtraDev, handle, idx, num);
++
++    ALOGW_IF(err, "getIonFd(...) failed %d (%s)", err, strerror(-err));
++    return err;
++}
++#endif
++
+ 
+ // ---------------------------------------------------------------------------
+ }; // namespace android
+-- 
+2.15.1
+

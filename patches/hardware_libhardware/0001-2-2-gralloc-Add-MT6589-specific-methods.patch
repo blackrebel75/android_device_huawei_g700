@@ -1,0 +1,168 @@
+From 25f8cb51b7e35e68270d3c6e512281f242c7159d Mon Sep 17 00:00:00 2001
+From: xplodwild <xplod@ouverta.fr>
+Date: Tue, 8 Oct 2013 23:25:58 +0200
+Subject: [PATCH] [2/2] gralloc: Add MT6589-specific methods
+
+Change-Id: Ia20bd2a806e63ddb5558fcc467e4a7aabb33c23c
+---
+ Android.mk                       |  4 ++++
+ include/hardware/camera_common.h |  3 ++-
+ include/hardware/gralloc.h       | 48 +++++++++++++++++++++++++++++++++++++
+ include/hardware/hwcomposer.h    | 52 ++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 106 insertions(+), 1 deletion(-)
+
+diff --git a/Android.mk b/Android.mk
+index aec6781..6109443 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -13,6 +13,10 @@ LOCAL_INCLUDES += $(LOCAL_PATH)
+ LOCAL_CFLAGS  += -DQEMU_HARDWARE
+ QEMU_HARDWARE := true
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++LOCAL_CFLAGS += -DMTK_MT6589
++endif
++
+ LOCAL_SHARED_LIBRARIES += libdl
+ 
+ LOCAL_SRC_FILES += hardware.c
+diff --git a/include/hardware/camera_common.h b/include/hardware/camera_common.h
+index dadbc8f..af9d9da 100644
+--- a/include/hardware/camera_common.h
++++ b/include/hardware/camera_common.h
+@@ -188,7 +188,8 @@ typedef struct camera_info {
+      *
+      */
+     const camera_metadata_t *static_camera_characteristics;
+-} camera_info_t;
++
++} _camera_info_t;
+ 
+ /**
+  * camera_device_status_t:
+diff --git a/include/hardware/gralloc.h b/include/hardware/gralloc.h
+index 34938d6..48aa355 100644
+--- a/include/hardware/gralloc.h
++++ b/include/hardware/gralloc.h
+@@ -401,6 +401,54 @@ static inline int gralloc_close(struct alloc_device_t* device) {
+     return device->common.close(&device->common);
+ }
+ 
++#ifdef MTK_MT6589
++
++#define GRALLOC_HARDWARE_EXTRA "extra"
++
++// mtk extra buffer usage flags
++enum {
++    // BYTE#2 for S3D control
++    EXTRA_USAGE_S3D_UNKNOWN        = 0x00100000,    // for content layout
++    EXTRA_USAGE_S3D_SIDE_BY_SIDE   = 0x00200000,
++    EXTRA_USAGE_S3D_TOP_AND_BOTTOM = 0x00400000,
++    EXTRA_USAGE_S3D_LR_SWAPPED     = 0x00800000,
++
++    EXTRA_USAGE_S3D_RESERVED_BIT0  = 0x00010000,    // reserved bits
++    EXTRA_USAGE_S3D_RESERVED_BIT1  = 0x00020000,
++    EXTRA_USAGE_S3D_RESERVED_BIT2  = 0x00040000,
++    EXTRA_USAGE_S3D_RESERVED_BIT3  = 0x00080000,
++
++    // for init
++    EXTRA_USAGE_INIT_VALUE         = EXTRA_USAGE_S3D_UNKNOWN,
++};
++
++typedef struct extra_device_t {
++    struct hw_device_t common;
++
++    /*
++     * (*getIonFd)() is called for getting ion share fd from buffer handle
++     * It should return the beginning index of native_handle.data[]
++     * for ion shard fds and number of ion share fds
++     */
++
++    int (*getIonFd)(struct extra_device_t* dev,
++            buffer_handle_t handle, int *idx, int *num);
++
++    void* reserved_proc[7];
++} extra_device_t;
++
++static inline int gralloc_extra_open(const struct hw_module_t* module,
++        struct extra_device_t** device) {
++    return module->methods->open(module,
++            GRALLOC_HARDWARE_EXTRA, (struct hw_device_t**)device);
++}
++
++static inline int gralloc_extra_close(struct extra_device_t* device) {
++    return device->common.close(&device->common);
++}
++
++#endif // MTK_MT6589
++
+ __END_DECLS
+ 
+ #endif  // ANDROID_GRALLOC_INTERFACE_H
+diff --git a/include/hardware/hwcomposer.h b/include/hardware/hwcomposer.h
+index e848d32..392a464 100644
+--- a/include/hardware/hwcomposer.h
++++ b/include/hardware/hwcomposer.h
+@@ -321,7 +321,59 @@ typedef struct hwc_layer_1 {
+      * For 32-bit mode, this struct is 96 bytes, and needs to be padded as such
+      * to maintain binary compatibility.
+      */
++
++#ifndef MTK_MT6589
+     uint8_t reserved[96 - 76];
++#else
++    int32_t reserved[24 - 19];
++
++    typedef struct hwc_layer_ext {
++        /* string for distinguish handler */
++        char overlayType[4];
++
++        /* producer type */
++        int32_t connectApi;
++
++        /* layer id */
++        int32_t identity;
++
++        /* buffer width */
++        int32_t width;
++
++        /* buffer height */
++        int32_t height;
++
++        /* buffer stride */
++        int32_t stride;
++
++        /* buffer format */
++        int32_t format;
++
++        /* rectangle filling color */
++        hwc_color_t fillColor;
++
++        /* linear transform matrix */
++        float transformMatrix[9];
++        
++        union {
++            uint32_t extraFlags;
++            struct {
++                uint8_t planeOrientation;
++                uint8_t stereoLayerFlags;
++                uint8_t stereoBufferFlags;
++                int8_t stereoOffset;
++            };
++        };
++
++        /* mmu mapping address */
++        uint32_t mva;
++
++        /* pad to 128 bytes */
++        int32_t reserved[32 - 19];
++    } hwc_layer_ext_t;
++    hwc_layer_ext_t ext;
++#endif // MTK_MT6589
++
+ #endif
+ 
+ } hwc_layer_1_t;
+-- 
+2.15.1
+

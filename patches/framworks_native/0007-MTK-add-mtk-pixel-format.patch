@@ -1,0 +1,30 @@
+From 9e1ae636a3ce41374f3e107e95dd48494f09dba4 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 14 Jun 2018 19:19:24 +0200
+Subject: [PATCH 7/9] [MTK] add mtk pixel format
+
+---
+ opengl/libagl/egl.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/opengl/libagl/egl.cpp b/opengl/libagl/egl.cpp
+index 24e32598b..7b56262f6 100644
+--- a/opengl/libagl/egl.cpp
++++ b/opengl/libagl/egl.cpp
+@@ -2051,6 +2051,13 @@ EGLImageKHR eglCreateImageKHR(EGLDisplay dpy, EGLContext ctx, EGLenum target,
+         case HAL_PIXEL_FORMAT_RGB_888:
+         case HAL_PIXEL_FORMAT_RGB_565:
+         case HAL_PIXEL_FORMAT_BGRA_8888:
++ //shallytest, for sw gralloc interface
++        case HAL_PIXEL_FORMAT_YV12:
++        case HAL_PIXEL_FORMAT_I420:
++        case HAL_PIXEL_FORMAT_NV12_BLK:
++        case HAL_PIXEL_FORMAT_NV12_BLK_FCM:
++        //~shallytest, for sw gralloc interface
++
+             break;
+         default:
+             return setError(EGL_BAD_PARAMETER, EGL_NO_IMAGE_KHR);
+-- 
+2.15.1
+

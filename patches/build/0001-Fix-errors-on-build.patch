@@ -1,0 +1,25 @@
+From 5021bc155c6950a3cbb565dcb4765a2afc7adaa9 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Sun, 19 Mar 2017 19:58:51 +0100
+Subject: [PATCH] Fix errors on build
+
+Change-Id: Ic0b7421e1fa0ef9a0cdc14b6135e2649cef110ed
+---
+ core/binary.mk | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/core/binary.mk b/core/binary.mk
+index 170e20c5e..e986e37b9 100644
+--- a/core/binary.mk
++++ b/core/binary.mk
+@@ -329,6 +329,7 @@ ifneq ($(LOCAL_NO_SYNTAX_CHECK),true)
+ endif
+ endif
+ $(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_CXX := $(my_cxx)
++$(LOCAL_INTERMEDIATE_TARGETS): PRIVATE_CLANG := $(my_clang)
+ 
+ # TODO: support a mix of standard extensions so that this isn't necessary
+ LOCAL_CPP_EXTENSION := $(strip $(LOCAL_CPP_EXTENSION))
+-- 
+2.15.1
+

@@ -1,0 +1,73 @@
+From 614e1edc1e314e000e88a23e9a2b2c2ac9d69453 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 22 Mar 2017 02:05:52 +0100
+Subject: [PATCH 21/27] MediaTek: read MTK Serial Number. Thanks to @ferhung!!
+
+Change-Id: Ib7409c89f54c2c35be0fb6d79d5f72cfe566fcfd
+---
+ init/init.c | 42 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/init/init.c b/init/init.c
+index d5b053b6..2beeaaaf 100644
+--- a/init/init.c
++++ b/init/init.c
+@@ -721,6 +721,44 @@ static int console_init_action(int nargs, char **args)
+     return 0;
+ }
+ 
++#ifdef MTK_HARDWARE
++static int read_serialno()
++{
++    char pval[PROP_VALUE_MAX];
++    int fd;
++    char serialno[32];
++    size_t s;
++
++    int ret = property_get("ro.boot.serialno", pval);
++    if (ret > 0) {
++        NOTICE("Already get serial number from cmdline\n");
++        return 1;
++    }
++
++    fd = open("/sys/sys_info/serial_number", O_RDWR);
++    if (fd < 0) {
++        NOTICE("fail to open: %s\n", "/sys/sys_info/serial_number");
++        return 0;
++    }
++    s = read(fd, serialno, sizeof(char)*32);
++
++    serialno[s-1] = '\0';
++
++    close(fd);
++
++    if (s <= 0) {
++	    NOTICE("could not read serial number sys file\n");
++	    return 0;
++	}
++
++    NOTICE( "serial number=%s\n",serialno);
++
++    property_set("ro.boot.serialno", serialno);
++
++    return 1;
++}
++#endif
++
+ static void import_kernel_nv(char *name, int for_emulator)
+ {
+     char *value = strchr(name, '=');
+@@ -823,6 +861,10 @@ static void process_kernel_cmdline(void)
+     if (qemu[0])
+         import_kernel_cmdline(1, import_kernel_nv);
+ 
++#ifdef MTK_HARDWARE
++    read_serialno();
++#endif
++
+     /* now propogate the info given on command line to internal variables
+      * used by init as well as the current required properties
+      */
+-- 
+2.15.1
+

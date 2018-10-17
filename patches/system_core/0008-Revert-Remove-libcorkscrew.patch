@@ -1,0 +1,4998 @@
+From db597c024c4ad096c7b3e8c7ac7028beb5d05475 Mon Sep 17 00:00:00 2001
+From: Kyle Repinski <repinski23@gmail.com>
+Date: Tue, 4 Nov 2014 00:49:31 -0600
+Subject: [PATCH 08/27] Revert "Remove libcorkscrew."
+
+This reverts commit 688a8a7232ff1f1be1ab077072deadb6f4c71eef.
+
+Change-Id: I8fbce8b1d2bfab9aabf4d5abc0b185bdda38d26e
+
+# Conflicts:
+#	libbacktrace/Android.mk
+---
+ libbacktrace/Android.mk                 |  21 +
+ libbacktrace/Corkscrew.cpp              | 250 +++++++++
+ libbacktrace/Corkscrew.h                |  82 +++
+ libcorkscrew/Android.mk                 | 100 ++++
+ libcorkscrew/MODULE_LICENSE_APACHE2     |   0
+ libcorkscrew/NOTICE                     | 190 +++++++
+ libcorkscrew/arch-arm/backtrace-arm.c   | 589 +++++++++++++++++++++
+ libcorkscrew/arch-arm/ptrace-arm.c      |  73 +++
+ libcorkscrew/arch-mips/backtrace-mips.c | 901 ++++++++++++++++++++++++++++++++
+ libcorkscrew/arch-mips/dwarf.h          | 187 +++++++
+ libcorkscrew/arch-mips/ptrace-mips.c    |  77 +++
+ libcorkscrew/arch-x86/backtrace-x86.c   | 823 +++++++++++++++++++++++++++++
+ libcorkscrew/arch-x86/dwarf.h           | 140 +++++
+ libcorkscrew/arch-x86/ptrace-x86.c      |  64 +++
+ libcorkscrew/backtrace-arch.h           |  45 ++
+ libcorkscrew/backtrace-helper.c         |  40 ++
+ libcorkscrew/backtrace-helper.h         |  43 ++
+ libcorkscrew/backtrace.c                | 335 ++++++++++++
+ libcorkscrew/demangle.c                 |  36 ++
+ libcorkscrew/map_info.c                 | 279 ++++++++++
+ libcorkscrew/ptrace-arch.h              |  51 ++
+ libcorkscrew/ptrace.c                   | 152 ++++++
+ libcorkscrew/symbol_table.c             | 227 ++++++++
+ libcorkscrew/test.cpp                   |  76 +++
+ 24 files changed, 4781 insertions(+)
+ create mode 100644 libbacktrace/Corkscrew.cpp
+ create mode 100644 libbacktrace/Corkscrew.h
+ create mode 100644 libcorkscrew/Android.mk
+ create mode 100644 libcorkscrew/MODULE_LICENSE_APACHE2
+ create mode 100644 libcorkscrew/NOTICE
+ create mode 100644 libcorkscrew/arch-arm/backtrace-arm.c
+ create mode 100644 libcorkscrew/arch-arm/ptrace-arm.c
+ create mode 100644 libcorkscrew/arch-mips/backtrace-mips.c
+ create mode 100644 libcorkscrew/arch-mips/dwarf.h
+ create mode 100644 libcorkscrew/arch-mips/ptrace-mips.c
+ create mode 100755 libcorkscrew/arch-x86/backtrace-x86.c
+ create mode 100755 libcorkscrew/arch-x86/dwarf.h
+ create mode 100755 libcorkscrew/arch-x86/ptrace-x86.c
+ create mode 100644 libcorkscrew/backtrace-arch.h
+ create mode 100644 libcorkscrew/backtrace-helper.c
+ create mode 100644 libcorkscrew/backtrace-helper.h
+ create mode 100644 libcorkscrew/backtrace.c
+ create mode 100644 libcorkscrew/demangle.c
+ create mode 100644 libcorkscrew/map_info.c
+ create mode 100755 libcorkscrew/ptrace-arch.h
+ create mode 100644 libcorkscrew/ptrace.c
+ create mode 100644 libcorkscrew/symbol_table.c
+ create mode 100644 libcorkscrew/test.cpp
+
+diff --git a/libbacktrace/Android.mk b/libbacktrace/Android.mk
+index 9588dd6d..5f19b4ba 100755
+--- a/libbacktrace/Android.mk
++++ b/libbacktrace/Android.mk
+@@ -46,6 +46,10 @@ libbacktrace_shared_libraries_target := \
+ 	libcutils \
+ 	libgccdemangle \
+ 
++# To enable using libunwind on each arch, add it to this list.
++libunwind_architectures := arm arm64 mips x86 x86_64
++
++ifeq ($(TARGET_ARCH),$(filter $(TARGET_ARCH),$(libunwind_architectures)))
+ libbacktrace_src_files += \
+ 	UnwindCurrent.cpp \
+ 	UnwindMap.cpp \
+@@ -67,6 +71,23 @@ libbacktrace_static_libraries_host := \
+ libbacktrace_ldlibs_host := \
+ 	-lpthread \
+ 	-lrt \
++else
++libbacktrace_src_files += \
++	Corkscrew.cpp \
++
++libbacktrace_c_includes := \
++	system/core/libcorkscrew \
++
++libbacktrace_shared_libraries := \
++	libcorkscrew \
++
++libbacktrace_shared_libraries_target += \
++	libdl \
++
++libbacktrace_ldlibs_host := \
++	-ldl \
++
++endif
+ 
+ module := libbacktrace
+ module_tag := optional
+diff --git a/libbacktrace/Corkscrew.cpp b/libbacktrace/Corkscrew.cpp
+new file mode 100644
+index 00000000..773b0a25
+--- /dev/null
++++ b/libbacktrace/Corkscrew.cpp
+@@ -0,0 +1,250 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include <backtrace/Backtrace.h>
++
++#include <string.h>
++
++#include <backtrace-arch.h>
++#include <corkscrew/backtrace.h>
++
++#ifndef __USE_GNU
++#define __USE_GNU
++#endif
++#include <dlfcn.h>
++
++#include "BacktraceLog.h"
++#include "Corkscrew.h"
++
++//-------------------------------------------------------------------------
++// CorkscrewMap functions.
++//-------------------------------------------------------------------------
++CorkscrewMap::CorkscrewMap(pid_t pid) : BacktraceMap(pid), map_info_(NULL) {
++}
++
++CorkscrewMap::~CorkscrewMap() {
++  if (map_info_) {
++    free_map_info_list(map_info_);
++    map_info_ = NULL;
++  }
++}
++
++bool CorkscrewMap::Build() {
++  map_info_ = load_map_info_list(pid_);
++
++  // Use the information in map_info_ to construct the BacktraceMap data
++  // rather than reparsing /proc/self/maps.
++  map_info_t* cur_map = map_info_;
++  while (cur_map) {
++    backtrace_map_t map;
++    map.start = cur_map->start;
++    map.end = cur_map->end;
++    map.flags = 0;
++    if (cur_map->is_readable) {
++      map.flags |= PROT_READ;
++    }
++    if (cur_map->is_writable) {
++      map.flags |= PROT_WRITE;
++    }
++    if (cur_map->is_executable) {
++      map.flags |= PROT_EXEC;
++    }
++    map.name = cur_map->name;
++
++    // The maps are in descending order, but we want them in ascending order.
++    maps_.push_front(map);
++
++    cur_map = cur_map->next;
++  }
++  return map_info_ != NULL;
++}
++
++//-------------------------------------------------------------------------
++// CorkscrewCommon functions.
++//-------------------------------------------------------------------------
++bool CorkscrewCommon::GenerateFrameData(
++    backtrace_frame_t* cork_frames, ssize_t num_frames) {
++  if (num_frames < 0) {
++    BACK_LOGW("libcorkscrew unwind failed.");
++    return false;
++  }
++
++  std::vector<backtrace_frame_data_t>* frames = GetFrames();
++  frames->resize(num_frames);
++  size_t i = 0;
++  for (std::vector<backtrace_frame_data_t>::iterator it = frames->begin();
++       it != frames->end(); ++it, ++i) {
++    it->num = i;
++    it->pc = cork_frames[i].absolute_pc;
++    it->sp = cork_frames[i].stack_top;
++    it->stack_size = cork_frames[i].stack_size;
++    it->func_offset = 0;
++
++    it->map = FindMap(it->pc);
++    it->func_name = GetFunctionName(it->pc, &it->func_offset);
++  }
++  return true;
++}
++
++//-------------------------------------------------------------------------
++// CorkscrewCurrent functions.
++//-------------------------------------------------------------------------
++CorkscrewCurrent::CorkscrewCurrent() {
++}
++
++CorkscrewCurrent::~CorkscrewCurrent() {
++}
++
++bool CorkscrewCurrent::Unwind(size_t num_ignore_frames) {
++  backtrace_frame_t frames[MAX_BACKTRACE_FRAMES];
++  ssize_t num_frames = unwind_backtrace(frames, num_ignore_frames, MAX_BACKTRACE_FRAMES);
++
++  return GenerateFrameData(frames, num_frames);
++}
++
++std::string CorkscrewCurrent::GetFunctionNameRaw(uintptr_t pc, uintptr_t* offset) {
++  *offset = 0;
++
++  Dl_info info;
++  const backtrace_map_t* map = FindMap(pc);
++  if (map) {
++    if (dladdr((const void*)pc, &info)) {
++      if (info.dli_sname) {
++        *offset = pc - map->start - (uintptr_t)info.dli_saddr + (uintptr_t)info.dli_fbase;
++        return info.dli_sname;
++      }
++    } else {
++      // dladdr(3) didn't find a symbol; maybe it's static? Look in the ELF file...
++      symbol_table_t* symbol_table = load_symbol_table(map->name.c_str());
++      if (symbol_table) {
++        // First check if we can find the symbol using a relative pc.
++        std::string name;
++        const symbol_t* elf_symbol = find_symbol(symbol_table, pc - map->start);
++        if (elf_symbol) {
++          name = elf_symbol->name;
++          *offset = pc - map->start - elf_symbol->start;
++        } else if ((elf_symbol = find_symbol(symbol_table, pc)) != NULL) {
++          // Found the symbol using the absolute pc.
++          name = elf_symbol->name;
++          *offset = pc - elf_symbol->start;
++        }
++        free_symbol_table(symbol_table);
++        return name;
++      }
++    }
++  }
++  return "";
++}
++
++//-------------------------------------------------------------------------
++// CorkscrewThread functions.
++//-------------------------------------------------------------------------
++CorkscrewThread::CorkscrewThread() {
++}
++
++CorkscrewThread::~CorkscrewThread() {
++}
++
++void CorkscrewThread::ThreadUnwind(
++    siginfo_t* siginfo, void* sigcontext, size_t num_ignore_frames) {
++  backtrace_frame_t cork_frames[MAX_BACKTRACE_FRAMES];
++  CorkscrewMap* map = static_cast<CorkscrewMap*>(GetMap());
++  ssize_t num_frames = unwind_backtrace_signal_arch(
++      siginfo, sigcontext, map->GetMapInfo(), cork_frames,
++      num_ignore_frames, MAX_BACKTRACE_FRAMES);
++  if (num_frames > 0) {
++    std::vector<backtrace_frame_data_t>* frames = GetFrames();
++    frames->resize(num_frames);
++    size_t i = 0;
++    for (std::vector<backtrace_frame_data_t>::iterator it = frames->begin();
++         it != frames->end(); ++it, ++i) {
++      it->num = i;
++      it->pc = cork_frames[i].absolute_pc;
++      it->sp = cork_frames[i].stack_top;
++      it->stack_size = cork_frames[i].stack_size;
++      it->map = NULL;
++      it->func_offset = 0;
++    }
++  }
++}
++
++//-------------------------------------------------------------------------
++// CorkscrewPtrace functions.
++//-------------------------------------------------------------------------
++CorkscrewPtrace::CorkscrewPtrace() : ptrace_context_(NULL) {
++}
++
++CorkscrewPtrace::~CorkscrewPtrace() {
++  if (ptrace_context_) {
++    free_ptrace_context(ptrace_context_);
++    ptrace_context_ = NULL;
++  }
++}
++
++bool CorkscrewPtrace::Unwind(size_t num_ignore_frames) {
++  ptrace_context_ = load_ptrace_context(Tid());
++
++  backtrace_frame_t frames[MAX_BACKTRACE_FRAMES];
++  ssize_t num_frames = unwind_backtrace_ptrace(
++      Tid(), ptrace_context_, frames, num_ignore_frames, MAX_BACKTRACE_FRAMES);
++
++  return GenerateFrameData(frames, num_frames);
++}
++
++std::string CorkscrewPtrace::GetFunctionNameRaw(uintptr_t pc, uintptr_t* offset) {
++  // Get information about a different process.
++  const map_info_t* map_info;
++  const symbol_t* symbol;
++  find_symbol_ptrace(ptrace_context_, pc, &map_info, &symbol);
++  char* symbol_name = NULL;
++  if (symbol) {
++    if (map_info) {
++      *offset = pc - map_info->start - symbol->start;
++    }
++    symbol_name = symbol->name;
++    return symbol_name;
++  }
++
++  return "";
++}
++
++//-------------------------------------------------------------------------
++// C++ object creation functions.
++//-------------------------------------------------------------------------
++Backtrace* CreateCurrentObj(BacktraceMap* map) {
++  return new BacktraceCurrent(new CorkscrewCurrent(), map);
++}
++
++Backtrace* CreatePtraceObj(pid_t pid, pid_t tid, BacktraceMap* map) {
++  return new BacktracePtrace(new CorkscrewPtrace(), pid, tid, map);
++}
++
++Backtrace* CreateThreadObj(pid_t tid, BacktraceMap* map) {
++  CorkscrewThread* thread_obj = new CorkscrewThread();
++  return new BacktraceThread(thread_obj, thread_obj, tid, map);
++}
++
++//-------------------------------------------------------------------------
++// BacktraceMap create function.
++//-------------------------------------------------------------------------
++BacktraceMap* BacktraceMap::Create(pid_t pid) {
++  BacktraceMap* map = new CorkscrewMap(pid);
++  if (!map->Build()) {
++    delete map;
++    return NULL;
++  }
++  return map;
++}
+diff --git a/libbacktrace/Corkscrew.h b/libbacktrace/Corkscrew.h
+new file mode 100644
+index 00000000..16333980
+--- /dev/null
++++ b/libbacktrace/Corkscrew.h
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef _LIBBACKTRACE_CORKSCREW_H
++#define _LIBBACKTRACE_CORKSCREW_H
++
++#include <inttypes.h>
++
++#include <string>
++
++#include <backtrace/Backtrace.h>
++#include <backtrace/BacktraceMap.h>
++
++#include <corkscrew/backtrace.h>
++
++#include "BacktraceImpl.h"
++#include "BacktraceThread.h"
++
++class CorkscrewMap : public BacktraceMap {
++public:
++  CorkscrewMap(pid_t pid);
++  virtual ~CorkscrewMap();
++
++  virtual bool Build();
++
++  map_info_t* GetMapInfo() { return map_info_; }
++
++private:
++  map_info_t* map_info_;
++};
++
++class CorkscrewCommon : public BacktraceImpl {
++public:
++  bool GenerateFrameData(backtrace_frame_t* cork_frames, ssize_t num_frames);
++};
++
++class CorkscrewCurrent : public CorkscrewCommon {
++public:
++  CorkscrewCurrent();
++  virtual ~CorkscrewCurrent();
++
++  virtual bool Unwind(size_t num_ignore_threads);
++
++  virtual std::string GetFunctionNameRaw(uintptr_t pc, uintptr_t* offset);
++};
++
++class CorkscrewThread : public CorkscrewCurrent, public BacktraceThreadInterface {
++public:
++  CorkscrewThread();
++  virtual ~CorkscrewThread();
++
++  virtual void ThreadUnwind(
++      siginfo_t* siginfo, void* sigcontext, size_t num_ignore_frames);
++};
++
++class CorkscrewPtrace : public CorkscrewCommon {
++public:
++  CorkscrewPtrace();
++  virtual ~CorkscrewPtrace();
++
++  virtual std::string GetFunctionNameRaw(uintptr_t pc, uintptr_t* offset);
++
++  virtual bool Unwind(size_t num_ignore_threads);
++
++private:
++  ptrace_context_t* ptrace_context_;
++};
++
++#endif // _LIBBACKTRACE_CORKSCREW_H
+diff --git a/libcorkscrew/Android.mk b/libcorkscrew/Android.mk
+new file mode 100644
+index 00000000..8f3b68cd
+--- /dev/null
++++ b/libcorkscrew/Android.mk
+@@ -0,0 +1,100 @@
++# Copyright (C) 2011 The Android Open Source Project
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#      http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++LOCAL_PATH:= $(call my-dir)
++
++generic_src_files := \
++	backtrace.c \
++	backtrace-helper.c \
++	demangle.c \
++	map_info.c \
++	ptrace.c \
++	symbol_table.c
++
++arm_src_files := \
++	arch-arm/backtrace-arm.c \
++	arch-arm/ptrace-arm.c
++
++x86_src_files := \
++	arch-x86/backtrace-x86.c \
++	arch-x86/ptrace-x86.c
++
++ifneq ($(TARGET_IS_64_BIT),true)
++
++include $(CLEAR_VARS)
++
++LOCAL_SRC_FILES := $(generic_src_files)
++
++ifeq ($(TARGET_ARCH),arm)
++LOCAL_SRC_FILES += $(arm_src_files)
++LOCAL_CFLAGS += -DCORKSCREW_HAVE_ARCH
++endif
++ifeq ($(TARGET_ARCH),x86)
++LOCAL_SRC_FILES += $(x86_src_files)
++LOCAL_CFLAGS += -DCORKSCREW_HAVE_ARCH
++endif
++ifeq ($(TARGET_ARCH),mips)
++LOCAL_SRC_FILES += \
++	arch-mips/backtrace-mips.c \
++	arch-mips/ptrace-mips.c
++LOCAL_CFLAGS += -DCORKSCREW_HAVE_ARCH
++endif
++
++LOCAL_SHARED_LIBRARIES += libdl libcutils liblog libgccdemangle
++
++LOCAL_CFLAGS += -std=gnu99 -Werror -Wno-unused-parameter
++LOCAL_MODULE := libcorkscrew
++LOCAL_MODULE_TAGS := optional
++
++include $(BUILD_SHARED_LIBRARY)
++
++# Build test.
++include $(CLEAR_VARS)
++LOCAL_SRC_FILES := test.cpp
++LOCAL_CFLAGS += -Werror -fno-inline-small-functions
++LOCAL_SHARED_LIBRARIES := libcorkscrew
++LOCAL_MODULE := libcorkscrew_test
++LOCAL_MODULE_TAGS := optional
++include $(BUILD_EXECUTABLE)
++
++endif # TARGET_IS_64_BIT == false
++
++
++ifeq ($(HOST_OS)-$(HOST_ARCH),linux-x86)
++
++# Build libcorkscrew.
++include $(CLEAR_VARS)
++LOCAL_SRC_FILES += $(generic_src_files) $(x86_src_files)
++LOCAL_CFLAGS += -DCORKSCREW_HAVE_ARCH
++LOCAL_STATIC_LIBRARIES += libcutils liblog
++LOCAL_LDLIBS += -ldl
++ifeq ($(HOST_OS),linux)
++  LOCAL_SHARED_LIBRARIES += libgccdemangle # TODO: is this even needed on Linux?
++  LOCAL_LDLIBS += -lrt
++endif
++LOCAL_CFLAGS += -std=gnu99 -Werror -Wno-unused-parameter
++LOCAL_MODULE := libcorkscrew
++LOCAL_MODULE_TAGS := optional
++include $(BUILD_HOST_SHARED_LIBRARY)
++
++# Build test.
++include $(CLEAR_VARS)
++LOCAL_SRC_FILES := test.cpp
++LOCAL_CFLAGS += -Werror
++LOCAL_SHARED_LIBRARIES := libcorkscrew
++LOCAL_MODULE := libcorkscrew_test
++LOCAL_MODULE_TAGS := optional
++include $(BUILD_HOST_EXECUTABLE)
++
++endif # $(HOST_OS)-$(HOST_ARCH) == linux-x86
+diff --git a/libcorkscrew/MODULE_LICENSE_APACHE2 b/libcorkscrew/MODULE_LICENSE_APACHE2
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/libcorkscrew/NOTICE b/libcorkscrew/NOTICE
+new file mode 100644
+index 00000000..becc1207
+--- /dev/null
++++ b/libcorkscrew/NOTICE
+@@ -0,0 +1,190 @@
++
++   Copyright (c) 2011, The Android Open Source Project
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
+diff --git a/libcorkscrew/arch-arm/backtrace-arm.c b/libcorkscrew/arch-arm/backtrace-arm.c
+new file mode 100644
+index 00000000..751efbf8
+--- /dev/null
++++ b/libcorkscrew/arch-arm/backtrace-arm.c
+@@ -0,0 +1,589 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/*
++ * Backtracing functions for ARM.
++ *
++ * This implementation uses the exception unwinding tables provided by
++ * the compiler to unwind call frames.  Refer to the ARM Exception Handling ABI
++ * documentation (EHABI) for more details about what's going on here.
++ *
++ * An ELF binary may contain an EXIDX section that provides an index to
++ * the exception handling table of each function, sorted by program
++ * counter address.
++ *
++ * This implementation also supports unwinding other processes via ptrace().
++ * In that case, the EXIDX section is found by reading the ELF section table
++ * structures using ptrace().
++ *
++ * Because the tables are used for exception handling, it can happen that
++ * a given function will not have an exception handling table.  In particular,
++ * exceptions are assumed to only ever be thrown at call sites.  Therefore,
++ * by definition leaf functions will not have exception handling tables.
++ * This may make unwinding impossible in some cases although we can still get
++ * some idea of the call stack by examining the PC and LR registers.
++ *
++ * As we are only interested in backtrace information, we do not need
++ * to perform all of the work of unwinding such as restoring register
++ * state and running cleanup functions.  Unwinding is performed virtually on
++ * an abstract machine context consisting of just the ARM core registers.
++ * Furthermore, we do not run generic "personality functions" because
++ * we may not be in a position to execute arbitrary code, especially if
++ * we are running in a signal handler or using ptrace()!
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../backtrace-arch.h"
++#include "../backtrace-helper.h"
++#include "../ptrace-arch.h"
++#include <corkscrew/ptrace.h>
++
++#include <stdlib.h>
++#include <signal.h>
++#include <stdbool.h>
++#include <limits.h>
++#include <errno.h>
++#include <sys/ptrace.h>
++#include <elf.h>
++#include <cutils/log.h>
++
++#include <ucontext.h>
++
++/* Unwind state. */
++typedef struct {
++    uint32_t gregs[16];
++} unwind_state_t;
++
++static const int R_SP = 13;
++static const int R_LR = 14;
++static const int R_PC = 15;
++
++/* Special EXIDX value that indicates that a frame cannot be unwound. */
++static const uint32_t EXIDX_CANTUNWIND = 1;
++
++/* Get the EXIDX section start and size for the module that contains a
++ * given program counter address.
++ *
++ * When the executable is statically linked, the EXIDX section can be
++ * accessed by querying the values of the __exidx_start and __exidx_end
++ * symbols.
++ *
++ * When the executable is dynamically linked, the linker exports a function
++ * called dl_unwind_find_exidx that obtains the EXIDX section for a given
++ * absolute program counter address.
++ *
++ * Bionic exports a helpful function called __gnu_Unwind_Find_exidx that
++ * handles both cases, so we use that here.
++ */
++typedef long unsigned int* _Unwind_Ptr;
++extern _Unwind_Ptr __gnu_Unwind_Find_exidx(_Unwind_Ptr pc, int *pcount);
++
++static uintptr_t find_exidx(uintptr_t pc, size_t* out_exidx_size) {
++    int count;
++    uintptr_t start = (uintptr_t)__gnu_Unwind_Find_exidx((_Unwind_Ptr)pc, &count);
++    *out_exidx_size = count;
++    return start;
++}
++
++/* Transforms a 31-bit place-relative offset to an absolute address.
++ * We assume the most significant bit is clear. */
++static uintptr_t prel_to_absolute(uintptr_t place, uint32_t prel_offset) {
++    return place + (((int32_t)(prel_offset << 1)) >> 1);
++}
++
++static uintptr_t get_exception_handler(const memory_t* memory,
++        const map_info_t* map_info_list, uintptr_t pc) {
++    if (!pc) {
++        ALOGV("get_exception_handler: pc is zero, no handler");
++        return 0;
++    }
++
++    uintptr_t exidx_start;
++    size_t exidx_size;
++    const map_info_t* mi;
++    if (memory->tid < 0) {
++        mi = NULL;
++        exidx_start = find_exidx(pc, &exidx_size);
++    } else {
++        mi = find_map_info(map_info_list, pc);
++        if (mi && mi->data) {
++            const map_info_data_t* data = (const map_info_data_t*)mi->data;
++            exidx_start = data->exidx_start;
++            exidx_size = data->exidx_size;
++        } else {
++            exidx_start = 0;
++            exidx_size = 0;
++        }
++    }
++
++    uintptr_t handler = 0;
++    int32_t handler_index = -1;
++    if (exidx_start) {
++        uint32_t low = 0;
++        uint32_t high = exidx_size;
++        while (low < high) {
++            uint32_t index = (low + high) / 2;
++            uintptr_t entry = exidx_start + index * 8;
++            uint32_t entry_prel_pc;
++            ALOGV("XXX low=%u, high=%u, index=%u", low, high, index);
++            if (!try_get_word(memory, entry, &entry_prel_pc)) {
++                break;
++            }
++            uintptr_t entry_pc = prel_to_absolute(entry, entry_prel_pc);
++            ALOGV("XXX entry_pc=0x%08x", entry_pc);
++            if (pc < entry_pc) {
++                high = index;
++                continue;
++            }
++            if (index + 1 < exidx_size) {
++                uintptr_t next_entry = entry + 8;
++                uint32_t next_entry_prel_pc;
++                if (!try_get_word(memory, next_entry, &next_entry_prel_pc)) {
++                    break;
++                }
++                uintptr_t next_entry_pc = prel_to_absolute(next_entry, next_entry_prel_pc);
++                ALOGV("XXX next_entry_pc=0x%08x", next_entry_pc);
++                if (pc >= next_entry_pc) {
++                    low = index + 1;
++                    continue;
++                }
++            }
++
++            uintptr_t entry_handler_ptr = entry + 4;
++            uint32_t entry_handler;
++            if (!try_get_word(memory, entry_handler_ptr, &entry_handler)) {
++                break;
++            }
++            if (entry_handler & (1L << 31)) {
++                handler = entry_handler_ptr; // in-place handler data
++            } else if (entry_handler != EXIDX_CANTUNWIND) {
++                handler = prel_to_absolute(entry_handler_ptr, entry_handler);
++            }
++            handler_index = index;
++            break;
++        }
++    }
++    if (mi) {
++        ALOGV("get_exception_handler: pc=0x%08x, module='%s', module_start=0x%08x, "
++                "exidx_start=0x%08x, exidx_size=%d, handler=0x%08x, handler_index=%d",
++                pc, mi->name, mi->start, exidx_start, exidx_size, handler, handler_index);
++    } else {
++        ALOGV("get_exception_handler: pc=0x%08x, "
++                "exidx_start=0x%08x, exidx_size=%d, handler=0x%08x, handler_index=%d",
++                pc, exidx_start, exidx_size, handler, handler_index);
++    }
++    return handler;
++}
++
++typedef struct {
++    uintptr_t ptr;
++    uint32_t word;
++} byte_stream_t;
++
++static bool try_next_byte(const memory_t* memory, byte_stream_t* stream, uint8_t* out_value) {
++    uint8_t result;
++    switch (stream->ptr & 3) {
++    case 0:
++        if (!try_get_word(memory, stream->ptr, &stream->word)) {
++            *out_value = 0;
++            return false;
++        }
++        *out_value = stream->word >> 24;
++        break;
++
++    case 1:
++        *out_value = stream->word >> 16;
++        break;
++
++    case 2:
++        *out_value = stream->word >> 8;
++        break;
++
++    default:
++        *out_value = stream->word;
++        break;
++    }
++
++    ALOGV("next_byte: ptr=0x%08x, value=0x%02x", stream->ptr, *out_value);
++    stream->ptr += 1;
++    return true;
++}
++
++static void set_reg(unwind_state_t* state, uint32_t reg, uint32_t value) {
++    ALOGV("set_reg: reg=%d, value=0x%08x", reg, value);
++    state->gregs[reg] = value;
++}
++
++static bool try_pop_registers(const memory_t* memory, unwind_state_t* state, uint32_t mask) {
++    uint32_t sp = state->gregs[R_SP];
++    bool sp_updated = false;
++    for (int i = 0; i < 16; i++) {
++        if (mask & (1 << i)) {
++            uint32_t value;
++            if (!try_get_word(memory, sp, &value)) {
++                return false;
++            }
++            if (i == R_SP) {
++                sp_updated = true;
++            }
++            set_reg(state, i, value);
++            sp += 4;
++        }
++    }
++    if (!sp_updated) {
++        set_reg(state, R_SP, sp);
++    }
++    return true;
++}
++
++/* Executes a built-in personality routine as defined in the EHABI.
++ * Returns true if unwinding should continue.
++ *
++ * The data for the built-in personality routines consists of a sequence
++ * of unwinding instructions, followed by a sequence of scope descriptors,
++ * each of which has a length and offset encoded using 16-bit or 32-bit
++ * values.
++ *
++ * We only care about the unwinding instructions.  They specify the
++ * operations of an abstract machine whose purpose is to transform the
++ * virtual register state (including the stack pointer) such that
++ * the call frame is unwound and the PC register points to the call site.
++ */
++static bool execute_personality_routine(const memory_t* memory,
++        unwind_state_t* state, byte_stream_t* stream, int pr_index) {
++    size_t size;
++    switch (pr_index) {
++    case 0: // Personality routine #0, short frame, descriptors have 16-bit scope.
++        size = 3;
++        break;
++    case 1: // Personality routine #1, long frame, descriptors have 16-bit scope.
++    case 2: { // Personality routine #2, long frame, descriptors have 32-bit scope.
++        uint8_t size_byte;
++        if (!try_next_byte(memory, stream, &size_byte)) {
++            return false;
++        }
++        size = (uint32_t)size_byte * sizeof(uint32_t) + 2;
++        break;
++    }
++    default: // Unknown personality routine.  Stop here.
++        return false;
++    }
++
++    bool pc_was_set = false;
++    while (size--) {
++        uint8_t op;
++        if (!try_next_byte(memory, stream, &op)) {
++            return false;
++        }
++        if ((op & 0xc0) == 0x00) {
++            // "vsp = vsp + (xxxxxx << 2) + 4"
++            set_reg(state, R_SP, state->gregs[R_SP] + ((op & 0x3f) << 2) + 4);
++        } else if ((op & 0xc0) == 0x40) {
++            // "vsp = vsp - (xxxxxx << 2) - 4"
++            set_reg(state, R_SP, state->gregs[R_SP] - ((op & 0x3f) << 2) - 4);
++        } else if ((op & 0xf0) == 0x80) {
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            uint32_t mask = (((uint32_t)op & 0x0f) << 12) | ((uint32_t)op2 << 4);
++            if (mask) {
++                // "Pop up to 12 integer registers under masks {r15-r12}, {r11-r4}"
++                if (!try_pop_registers(memory, state, mask)) {
++                    return false;
++                }
++                if (mask & (1 << R_PC)) {
++                    pc_was_set = true;
++                }
++            } else {
++                // "Refuse to unwind"
++                return false;
++            }
++        } else if ((op & 0xf0) == 0x90) {
++            if (op != 0x9d && op != 0x9f) {
++                // "Set vsp = r[nnnn]"
++                set_reg(state, R_SP, state->gregs[op & 0x0f]);
++            } else {
++                // "Reserved as prefix for ARM register to register moves"
++                // "Reserved as prefix for Intel Wireless MMX register to register moves"
++                return false;
++            }
++        } else if ((op & 0xf8) == 0xa0) {
++            // "Pop r4-r[4+nnn]"
++            uint32_t mask = (0x0ff0 >> (7 - (op & 0x07))) & 0x0ff0;
++            if (!try_pop_registers(memory, state, mask)) {
++                return false;
++            }
++        } else if ((op & 0xf8) == 0xa8) {
++            // "Pop r4-r[4+nnn], r14"
++            uint32_t mask = ((0x0ff0 >> (7 - (op & 0x07))) & 0x0ff0) | 0x4000;
++            if (!try_pop_registers(memory, state, mask)) {
++                return false;
++            }
++        } else if (op == 0xb0) {
++            // "Finish"
++            break;
++        } else if (op == 0xb1) {
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            if (op2 != 0x00 && (op2 & 0xf0) == 0x00) {
++                // "Pop integer registers under mask {r3, r2, r1, r0}"
++                if (!try_pop_registers(memory, state, op2)) {
++                    return false;
++                }
++            } else {
++                // "Spare"
++                return false;
++            }
++        } else if (op == 0xb2) {
++            // "vsp = vsp + 0x204 + (uleb128 << 2)"
++            uint32_t value = 0;
++            uint32_t shift = 0;
++            uint8_t op2;
++            do {
++                if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                    return false;
++                }
++                value |= (op2 & 0x7f) << shift;
++                shift += 7;
++            } while (op2 & 0x80);
++            set_reg(state, R_SP, state->gregs[R_SP] + (value << 2) + 0x204);
++        } else if (op == 0xb3) {
++            // "Pop VFP double-precision registers D[ssss]-D[ssss+cccc] saved (as if) by FSTMFDX"
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op2 & 0x0f) * 8 + 12);
++        } else if ((op & 0xf8) == 0xb8) {
++            // "Pop VFP double-precision registers D[8]-D[8+nnn] saved (as if) by FSTMFDX"
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op & 0x07) * 8 + 12);
++        } else if ((op & 0xf8) == 0xc0) {
++            // "Intel Wireless MMX pop wR[10]-wR[10+nnn]"
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op & 0x07) * 8 + 8);
++        } else if (op == 0xc6) {
++            // "Intel Wireless MMX pop wR[ssss]-wR[ssss+cccc]"
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op2 & 0x0f) * 8 + 8);
++        } else if (op == 0xc7) {
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            if (op2 != 0x00 && (op2 & 0xf0) == 0x00) {
++                // "Intel Wireless MMX pop wCGR registers under mask {wCGR3,2,1,0}"
++                set_reg(state, R_SP, state->gregs[R_SP] + __builtin_popcount(op2) * 4);
++            } else {
++                // "Spare"
++                return false;
++            }
++        } else if (op == 0xc8) {
++            // "Pop VFP double precision registers D[16+ssss]-D[16+ssss+cccc]
++            // saved (as if) by FSTMFD"
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op2 & 0x0f) * 8 + 8);
++        } else if (op == 0xc9) {
++            // "Pop VFP double precision registers D[ssss]-D[ssss+cccc] saved (as if) by FSTMFDD"
++            uint8_t op2;
++            if (!(size--) || !try_next_byte(memory, stream, &op2)) {
++                return false;
++            }
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op2 & 0x0f) * 8 + 8);
++        } else if ((op == 0xf8) == 0xd0) {
++            // "Pop VFP double-precision registers D[8]-D[8+nnn] saved (as if) by FSTMFDD"
++            set_reg(state, R_SP, state->gregs[R_SP] + (uint32_t)(op & 0x07) * 8 + 8);
++        } else {
++            // "Spare"
++            return false;
++        }
++    }
++    if (!pc_was_set) {
++        set_reg(state, R_PC, state->gregs[R_LR]);
++    }
++    return true;
++}
++
++static bool try_get_half_word(const memory_t* memory, uint32_t pc, uint16_t* out_value) {
++    uint32_t word;
++    if (try_get_word(memory, pc & ~2, &word)) {
++        *out_value = pc & 2 ? word >> 16 : word & 0xffff;
++        return true;
++    }
++    return false;
++}
++
++uintptr_t rewind_pc_arch(const memory_t* memory, uintptr_t pc) {
++    if (pc & 1) {
++        /* Thumb mode - need to check whether the bl(x) has long offset or not.
++         * Examples:
++         *
++         * arm blx in the middle of thumb:
++         * 187ae:       2300            movs    r3, #0
++         * 187b0:       f7fe ee1c       blx     173ec
++         * 187b4:       2c00            cmp     r4, #0
++         *
++         * arm bl in the middle of thumb:
++         * 187d8:       1c20            adds    r0, r4, #0
++         * 187da:       f136 fd15       bl      14f208
++         * 187de:       2800            cmp     r0, #0
++         *
++         * pure thumb:
++         * 18894:       189b            adds    r3, r3, r2
++         * 18896:       4798            blx     r3
++         * 18898:       b001            add     sp, #4
++         */
++        uint16_t prev1, prev2;
++        if (try_get_half_word(memory, pc - 5, &prev1)
++            && ((prev1 & 0xf000) == 0xf000)
++            && try_get_half_word(memory, pc - 3, &prev2)
++            && ((prev2 & 0xe000) == 0xe000)) {
++            pc -= 4; // long offset
++        } else {
++            pc -= 2;
++        }
++    } else {
++        /* ARM mode, all instructions are 32bit.  Yay! */
++        pc -= 4;
++    }
++    return pc;
++}
++
++static ssize_t unwind_backtrace_common(const memory_t* memory,
++        const map_info_t* map_info_list,
++        unwind_state_t* state, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth) {
++    size_t ignored_frames = 0;
++    size_t returned_frames = 0;
++
++    for (size_t index = 0; returned_frames < max_depth; index++) {
++        uintptr_t pc = index ? rewind_pc_arch(memory, state->gregs[R_PC])
++                : state->gregs[R_PC];
++        backtrace_frame_t* frame = add_backtrace_entry(pc,
++                backtrace, ignore_depth, max_depth, &ignored_frames, &returned_frames);
++        if (frame) {
++            frame->stack_top = state->gregs[R_SP];
++        }
++
++        uintptr_t handler = get_exception_handler(memory, map_info_list, pc);
++        if (!handler) {
++            // If there is no handler for the PC and this is the first frame,
++            // then the program may have branched to an invalid address.
++            // Try starting from the LR instead, otherwise stop unwinding.
++            if (index == 0 && state->gregs[R_LR]
++                    && state->gregs[R_LR] != state->gregs[R_PC]) {
++                set_reg(state, R_PC, state->gregs[R_LR]);
++                continue;
++            } else {
++                break;
++            }
++        }
++
++        byte_stream_t stream;
++        stream.ptr = handler;
++        uint8_t pr;
++        if (!try_next_byte(memory, &stream, &pr)) {
++            break;
++        }
++        if ((pr & 0xf0) != 0x80) {
++            // The first word is a place-relative pointer to a generic personality
++            // routine function.  We don't support invoking such functions, so stop here.
++            break;
++        }
++
++        // The first byte indicates the personality routine to execute.
++        // Following bytes provide instructions to the personality routine.
++        if (!execute_personality_routine(memory, state, &stream, pr & 0x0f)) {
++            break;
++        }
++        if (frame && state->gregs[R_SP] > frame->stack_top) {
++            frame->stack_size = state->gregs[R_SP] - frame->stack_top;
++        }
++        if (!state->gregs[R_PC]) {
++            break;
++        }
++    }
++
++    // Ran out of frames that we could unwind using handlers.
++    // Add a final entry for the LR if it looks sane and call it good.
++    if (returned_frames < max_depth
++            && state->gregs[R_LR]
++            && state->gregs[R_LR] != state->gregs[R_PC]
++            && is_executable_map(map_info_list, state->gregs[R_LR])) {
++        // We don't know where the stack for this extra frame starts so we
++        // don't return any stack information for it.
++        add_backtrace_entry(rewind_pc_arch(memory, state->gregs[R_LR]),
++                backtrace, ignore_depth, max_depth, &ignored_frames, &returned_frames);
++    }
++    return returned_frames;
++}
++
++ssize_t unwind_backtrace_signal_arch(siginfo_t* siginfo, void* sigcontext,
++        const map_info_t* map_info_list,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++    const ucontext_t* uc = (const ucontext_t*)sigcontext;
++
++    unwind_state_t state;
++
++    state.gregs[0] = uc->uc_mcontext.arm_r0;
++    state.gregs[1] = uc->uc_mcontext.arm_r1;
++    state.gregs[2] = uc->uc_mcontext.arm_r2;
++    state.gregs[3] = uc->uc_mcontext.arm_r3;
++    state.gregs[4] = uc->uc_mcontext.arm_r4;
++    state.gregs[5] = uc->uc_mcontext.arm_r5;
++    state.gregs[6] = uc->uc_mcontext.arm_r6;
++    state.gregs[7] = uc->uc_mcontext.arm_r7;
++    state.gregs[8] = uc->uc_mcontext.arm_r8;
++    state.gregs[9] = uc->uc_mcontext.arm_r9;
++    state.gregs[10] = uc->uc_mcontext.arm_r10;
++    state.gregs[11] = uc->uc_mcontext.arm_fp;
++    state.gregs[12] = uc->uc_mcontext.arm_ip;
++    state.gregs[13] = uc->uc_mcontext.arm_sp;
++    state.gregs[14] = uc->uc_mcontext.arm_lr;
++    state.gregs[15] = uc->uc_mcontext.arm_pc;
++
++    memory_t memory;
++    init_memory(&memory, map_info_list);
++    return unwind_backtrace_common(&memory, map_info_list, &state,
++            backtrace, ignore_depth, max_depth);
++}
++
++ssize_t unwind_backtrace_ptrace_arch(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++    struct pt_regs regs;
++    if (ptrace(PTRACE_GETREGS, tid, 0, &regs)) {
++        return -1;
++    }
++
++    unwind_state_t state;
++    for (int i = 0; i < 16; i++) {
++        state.gregs[i] = regs.uregs[i];
++    }
++
++    memory_t memory;
++    init_memory_ptrace(&memory, tid);
++    return unwind_backtrace_common(&memory, context->map_info_list, &state,
++            backtrace, ignore_depth, max_depth);
++}
+diff --git a/libcorkscrew/arch-arm/ptrace-arm.c b/libcorkscrew/arch-arm/ptrace-arm.c
+new file mode 100644
+index 00000000..a50844e6
+--- /dev/null
++++ b/libcorkscrew/arch-arm/ptrace-arm.c
+@@ -0,0 +1,73 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../ptrace-arch.h"
++
++#include <elf.h>
++#include <cutils/log.h>
++
++#ifndef PT_ARM_EXIDX
++#define PT_ARM_EXIDX 0x70000001
++#endif
++
++static void load_exidx_header(pid_t pid, map_info_t* mi,
++        uintptr_t* out_exidx_start, size_t* out_exidx_size) {
++    uint32_t elf_phoff;
++    uint32_t elf_phentsize_ehsize;
++    uint32_t elf_shentsize_phnum;
++    if (try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phoff), &elf_phoff)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_ehsize),
++                    &elf_phentsize_ehsize)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phnum),
++                    &elf_shentsize_phnum)) {
++        uint32_t elf_phentsize = elf_phentsize_ehsize >> 16;
++        uint32_t elf_phnum = elf_shentsize_phnum & 0xffff;
++        for (uint32_t i = 0; i < elf_phnum; i++) {
++            uintptr_t elf_phdr = mi->start + elf_phoff + i * elf_phentsize;
++            uint32_t elf_phdr_type;
++            if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_type), &elf_phdr_type)) {
++                break;
++            }
++            if (elf_phdr_type == PT_ARM_EXIDX) {
++                uint32_t elf_phdr_offset;
++                uint32_t elf_phdr_filesz;
++                if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_offset),
++                        &elf_phdr_offset)
++                        || !try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_filesz),
++                                &elf_phdr_filesz)) {
++                    break;
++                }
++                *out_exidx_start = mi->start + elf_phdr_offset;
++                *out_exidx_size = elf_phdr_filesz / 8;
++                ALOGV("Parsed EXIDX header info for %s: start=0x%08x, size=%d", mi->name,
++                        *out_exidx_start, *out_exidx_size);
++                return;
++            }
++        }
++    }
++    *out_exidx_start = 0;
++    *out_exidx_size = 0;
++}
++
++void load_ptrace_map_info_data_arch(pid_t pid, map_info_t* mi, map_info_data_t* data) {
++    load_exidx_header(pid, mi, &data->exidx_start, &data->exidx_size);
++}
++
++void free_ptrace_map_info_data_arch(map_info_t* mi, map_info_data_t* data) {
++}
+diff --git a/libcorkscrew/arch-mips/backtrace-mips.c b/libcorkscrew/arch-mips/backtrace-mips.c
+new file mode 100644
+index 00000000..832fb862
+--- /dev/null
++++ b/libcorkscrew/arch-mips/backtrace-mips.c
+@@ -0,0 +1,901 @@
++/*
++ * Copyright (C) 2012 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/*
++ * Backtracing functions for mips
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../backtrace-arch.h"
++#include "../backtrace-helper.h"
++#include "../ptrace-arch.h"
++#include <corkscrew/ptrace.h>
++#include "dwarf.h"
++
++#include <stdlib.h>
++#include <signal.h>
++#include <stdbool.h>
++#include <limits.h>
++#include <errno.h>
++#include <string.h>
++#include <sys/ptrace.h>
++#include <cutils/log.h>
++
++#include <sys/ucontext.h>
++
++/* For PTRACE_GETREGS */
++typedef struct {
++    uint64_t regs[32];
++    uint64_t lo;
++    uint64_t hi;
++    uint64_t epc;
++    uint64_t badvaddr;
++    uint64_t status;
++    uint64_t cause;
++} user_regs_struct;
++
++enum {
++    REG_ZERO = 0, REG_AT, REG_V0, REG_V1,
++    REG_A0, REG_A1, REG_A2, REG_A3,
++    REG_T0, REG_T1, REG_T2, REG_T3,
++    REG_T4, REG_T5, REG_T6, REG_T7,
++    REG_S0, REG_S1, REG_S2, REG_S3,
++    REG_S4, REG_S5, REG_S6, REG_S7,
++    REG_T8, REG_T9, REG_K0, REG_K1,
++    REG_GP, REG_SP, REG_S8, REG_RA,
++};
++
++
++/* Unwind state. */
++typedef struct {
++    uint32_t reg[DWARF_REGISTERS];
++} unwind_state_t;
++
++uintptr_t rewind_pc_arch(const memory_t* memory __attribute__((unused)), uintptr_t pc) {
++    if (pc == 0)
++        return pc;
++    if ((pc & 1) == 0)
++        return pc-8;            /* jal/bal/jalr + branch delay slot */
++    return pc;
++}
++
++/* Read byte through 4 byte cache. Usually we read byte by byte and updating cursor. */
++static bool try_get_byte(const memory_t* memory, uintptr_t ptr, uint8_t* out_value, uint32_t* cursor) {
++    static uintptr_t lastptr;
++    static uint32_t buf;
++
++    ptr += *cursor;
++
++    if (ptr < lastptr || lastptr + 3 < ptr) {
++        lastptr = (ptr >> 2) << 2;
++        if (!try_get_word(memory, lastptr, &buf)) {
++            return false;
++        }
++    }
++    *out_value = (uint8_t)((buf >> ((ptr & 3) * 8)) & 0xff);
++    ++*cursor;
++    return true;
++}
++
++/* Getting X bytes. 4 is maximum for now. */
++static bool try_get_xbytes(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint8_t bytes, uint32_t* cursor) {
++    uint32_t data = 0;
++    if (bytes > 4) {
++        ALOGE("can't read more than 4 bytes, trying to read %d", bytes);
++        return false;
++    }
++    for (int i = 0; i < bytes; i++) {
++        uint8_t buf;
++        if (!try_get_byte(memory, ptr, &buf, cursor)) {
++            return false;
++        }
++        data |= (uint32_t)buf << (i * 8);
++    }
++    *out_value = data;
++    return true;
++}
++
++/* Reads signed/unsigned LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_leb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor, bool sign_extend) {
++    uint8_t buf = 0;
++    uint32_t val = 0;
++    uint8_t c = 0;
++    do {
++        if (!try_get_byte(memory, ptr, &buf, cursor)) {
++            return false;
++        }
++        val |= ((uint32_t)buf & 0x7f) << (c * 7);
++        c++;
++    } while (buf & 0x80 && (c * 7) <= 32);
++    if (c * 7 > 32) {
++        ALOGE("%s: data exceeds expected 4 bytes maximum", __FUNCTION__);
++        return false;
++    }
++    if (sign_extend) {
++        if (buf & 0x40) {
++            val |= ((uint32_t)-1 << (c * 7));
++        }
++    }
++    *out_value = val;
++    return true;
++}
++
++/* Reads signed LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_sleb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor) {
++    return try_get_leb128(memory, ptr, out_value, cursor, true);
++}
++
++/* Reads unsigned LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_uleb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor) {
++    return try_get_leb128(memory, ptr, out_value, cursor, false);
++}
++
++/* Getting data encoded by dwarf encodings. */
++static bool read_dwarf(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint8_t encoding, uint32_t* cursor) {
++    uint32_t data = 0;
++    bool issigned = true;
++    uintptr_t addr = ptr + *cursor;
++    /* Lower 4 bits is data type/size */
++    /* TODO: add more encodings if it becomes necessary */
++    switch (encoding & 0xf) {
++    case DW_EH_PE_absptr:
++        if (!try_get_xbytes(memory, ptr, &data, 4, cursor)) {
++            return false;
++        }
++        *out_value = data;
++        return true;
++    case DW_EH_PE_udata4:
++        issigned = false;
++    case DW_EH_PE_sdata4:
++        if (!try_get_xbytes(memory, ptr, &data, 4, cursor)) {
++            return false;
++        }
++        break;
++    default:
++        ALOGE("unrecognized dwarf lower part encoding: 0x%x", encoding);
++        return false;
++    }
++    /* Higher 4 bits is modifier */
++    /* TODO: add more encodings if it becomes necessary */
++    switch (encoding & 0xf0) {
++    case 0:
++        *out_value = data;
++        break;
++    case DW_EH_PE_pcrel:
++        if (issigned) {
++            *out_value = addr + (int32_t)data;
++        } else {
++            *out_value = addr + data;
++        }
++        break;
++        /* Assuming ptr is correct base to calculate datarel */
++    case DW_EH_PE_datarel:
++        if (issigned) {
++            *out_value = ptr + (int32_t)data;
++        } else {
++            *out_value = ptr + data;
++        }
++        break;
++    default:
++        ALOGE("unrecognized dwarf higher part encoding: 0x%x", encoding);
++        return false;
++    }
++    return true;
++}
++
++/* Having PC find corresponding FDE by reading .eh_frame_hdr section data. */
++static uintptr_t find_fde(const memory_t* memory,
++                          const map_info_t* map_info_list, uintptr_t pc) {
++    if (!pc) {
++        ALOGV("find_fde: pc is zero, no eh_frame");
++        return 0;
++    }
++    const map_info_t* mi = find_map_info(map_info_list, pc);
++    if (!mi) {
++        ALOGV("find_fde: no map info for pc:0x%x", pc);
++        return 0;
++    }
++    const map_info_data_t* midata = mi->data;
++    if (!midata) {
++        ALOGV("find_fde: no eh_frame_hdr for map: start=0x%x, end=0x%x", mi->start, mi->end);
++        return 0;
++    }
++
++    eh_frame_hdr_info_t eh_hdr_info;
++    memset(&eh_hdr_info, 0, sizeof(eh_frame_hdr_info_t));
++
++    /* Getting the first word of eh_frame_hdr:
++       1st byte is version;
++       2nd byte is encoding of pointer to eh_frames;
++       3rd byte is encoding of count of FDEs in lookup table;
++       4th byte is encoding of lookup table entries.
++    */
++    uintptr_t eh_frame_hdr = midata->eh_frame_hdr;
++    uint32_t c = 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.version, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.eh_frame_ptr_enc, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.fde_count_enc, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.fde_table_enc, &c)) return 0;
++
++    /* TODO: 3rd byte can be DW_EH_PE_omit, that means no lookup table available and we should
++       try to parse eh_frame instead. Not sure how often it may occur, skipping now.
++    */
++    if (eh_hdr_info.version != 1) {
++        ALOGV("find_fde: eh_frame_hdr version %d is not supported", eh_hdr_info.version);
++        return 0;
++    }
++    /* Getting the data:
++       2nd word is eh_frame pointer (normally not used, because lookup table has all we need);
++       3rd word is count of FDEs in the lookup table;
++       starting from 4 word there is FDE lookup table (pairs of PC and FDE pointer) sorted by PC;
++    */
++    if (!read_dwarf(memory, eh_frame_hdr, &eh_hdr_info.eh_frame_ptr, eh_hdr_info.eh_frame_ptr_enc, &c)) return 0;
++    if (!read_dwarf(memory, eh_frame_hdr, &eh_hdr_info.fde_count, eh_hdr_info.fde_count_enc, &c)) return 0;
++    ALOGV("find_fde: found %d FDEs", eh_hdr_info.fde_count);
++
++    int32_t low = 0;
++    int32_t high = eh_hdr_info.fde_count;
++    uintptr_t start = 0;
++    uintptr_t fde = 0;
++    /* eh_frame_hdr + c points to lookup table at this point. */
++    while (low <= high) {
++        uint32_t mid = (high + low)/2;
++        uint32_t entry = c + mid * 8;
++        if (!read_dwarf(memory, eh_frame_hdr, &start, eh_hdr_info.fde_table_enc, &entry)) return 0;
++        if (pc <= start) {
++            high = mid - 1;
++        } else {
++            low = mid + 1;
++        }
++    }
++    /* Value found is at high. */
++    if (high < 0) {
++        ALOGV("find_fde: pc %x is out of FDE bounds: %x", pc, start);
++        return 0;
++    }
++    c += high * 8;
++    if (!read_dwarf(memory, eh_frame_hdr, &start, eh_hdr_info.fde_table_enc, &c)) return 0;
++    if (!read_dwarf(memory, eh_frame_hdr, &fde, eh_hdr_info.fde_table_enc, &c)) return 0;
++    ALOGV("pc 0x%x, ENTRY %d: start=0x%x, fde=0x%x", pc, high, start, fde);
++    return fde;
++}
++
++/* Execute single dwarf instruction and update dwarf state accordingly. */
++static bool execute_dwarf(const memory_t* memory, uintptr_t ptr, cie_info_t* cie_info,
++                          dwarf_state_t* dstate, uint32_t* cursor,
++                          dwarf_state_t* stack, uint8_t* stack_ptr) {
++    uint8_t inst;
++    uint8_t op = 0;
++
++    if (!try_get_byte(memory, ptr, &inst, cursor)) {
++        return false;
++    }
++    ALOGV("DW_CFA inst: 0x%x", inst);
++
++    /* For some instructions upper 2 bits is opcode and lower 6 bits is operand. See dwarf-2.0 7.23. */
++    if (inst & 0xc0) {
++        op = inst & 0x3f;
++        inst &= 0xc0;
++    }
++
++    switch ((dwarf_CFA)inst) {
++        uint32_t reg = 0;
++        uint32_t offset = 0;
++    case DW_CFA_advance_loc:
++        dstate->loc += op * cie_info->code_align;
++        ALOGV("DW_CFA_advance_loc: %d to 0x%x", op, dstate->loc);
++        break;
++    case DW_CFA_offset:
++        if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++        dstate->regs[op].rule = 'o';
++        dstate->regs[op].value = offset * cie_info->data_align;
++        ALOGV("DW_CFA_offset: r%d = o(%d)", op, dstate->regs[op].value);
++        break;
++    case DW_CFA_restore:
++        dstate->regs[op].rule = stack->regs[op].rule;
++        dstate->regs[op].value = stack->regs[op].value;
++        ALOGV("DW_CFA_restore: r%d = %c(%d)", op, dstate->regs[op].rule, dstate->regs[op].value);
++        break;
++    case DW_CFA_nop:
++        break;
++    case DW_CFA_set_loc: // probably we don't have it on mips.
++        if (!try_get_xbytes(memory, ptr, &offset, 4, cursor)) return false;
++        if (offset < dstate->loc) {
++            ALOGE("DW_CFA_set_loc: attempt to move location backward");
++            return false;
++        }
++        dstate->loc = offset * cie_info->code_align;
++        ALOGV("DW_CFA_set_loc: %d to 0x%x", offset * cie_info->code_align, dstate->loc);
++        break;
++    case DW_CFA_advance_loc1:
++        if (!try_get_byte(memory, ptr, (uint8_t*)&offset, cursor)) return false;
++        dstate->loc += (uint8_t)offset * cie_info->code_align;
++        ALOGV("DW_CFA_advance_loc1: %d to 0x%x", (uint8_t)offset * cie_info->code_align, dstate->loc);
++        break;
++    case DW_CFA_advance_loc2:
++        if (!try_get_xbytes(memory, ptr, &offset, 2, cursor)) return false;
++        dstate->loc += (uint16_t)offset * cie_info->code_align;
++        ALOGV("DW_CFA_advance_loc2: %d to 0x%x", (uint16_t)offset * cie_info->code_align, dstate->loc);
++        break;
++    case DW_CFA_advance_loc4:
++        if (!try_get_xbytes(memory, ptr, &offset, 4, cursor)) return false;
++        dstate->loc += offset * cie_info->code_align;
++        ALOGV("DW_CFA_advance_loc4: %d to 0x%x", offset * cie_info->code_align, dstate->loc);
++        break;
++    case DW_CFA_offset_extended: // probably we don't have it on mips.
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++        if (reg >= DWARF_REGISTERS) {
++            ALOGE("DW_CFA_offset_extended: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++            return false;
++        }
++        dstate->regs[reg].rule = 'o';
++        dstate->regs[reg].value = offset * cie_info->data_align;
++        ALOGV("DW_CFA_offset_extended: r%d = o(%d)", reg, dstate->regs[reg].value);
++        break;
++    case DW_CFA_restore_extended: // probably we don't have it on mips.
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        if (reg >= DWARF_REGISTERS) {
++            ALOGE("DW_CFA_restore_extended: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++            return false;
++        }
++        dstate->regs[reg].rule = stack->regs[reg].rule;
++        dstate->regs[reg].value = stack->regs[reg].value;
++        ALOGV("DW_CFA_restore: r%d = %c(%d)", reg, dstate->regs[reg].rule, dstate->regs[reg].value);
++        break;
++    case DW_CFA_undefined: // probably we don't have it on mips.
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        if (reg >= DWARF_REGISTERS) {
++            ALOGE("DW_CFA_undefined: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++            return false;
++        }
++        dstate->regs[reg].rule = 'u';
++        dstate->regs[reg].value = 0;
++        ALOGV("DW_CFA_undefined: r%d", reg);
++        break;
++    case DW_CFA_same_value: // probably we don't have it on mips.
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        if (reg >= DWARF_REGISTERS) {
++            ALOGE("DW_CFA_undefined: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++            return false;
++        }
++        dstate->regs[reg].rule = 's';
++        dstate->regs[reg].value = 0;
++        ALOGV("DW_CFA_same_value: r%d", reg);
++        break;
++    case DW_CFA_register: // probably we don't have it on mips.
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        /* that's new register actually, not offset */
++        if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++        if (reg >= DWARF_REGISTERS || offset >= DWARF_REGISTERS) {
++            ALOGE("DW_CFA_register: r%d or r%d exceeds supported number of registers (%d)", reg, offset, DWARF_REGISTERS);
++            return false;
++        }
++        dstate->regs[reg].rule = 'r';
++        dstate->regs[reg].value = offset;
++        ALOGV("DW_CFA_register: r%d = r(%d)", reg, dstate->regs[reg].value);
++        break;
++    case DW_CFA_remember_state:
++        if (*stack_ptr == DWARF_STATES_STACK) {
++            ALOGE("DW_CFA_remember_state: states stack overflow %d", *stack_ptr);
++            return false;
++        }
++        stack[(*stack_ptr)++] = *dstate;
++        ALOGV("DW_CFA_remember_state: stacktop moves to %d", *stack_ptr);
++        break;
++    case DW_CFA_restore_state:
++        /* We have CIE state saved at 0 position. It's not supposed to be taken
++           by DW_CFA_restore_state. */
++        if (*stack_ptr == 1) {
++            ALOGE("DW_CFA_restore_state: states stack is empty");
++            return false;
++        }
++        /* Don't touch location on restore. */
++        uintptr_t saveloc = dstate->loc;
++        *dstate = stack[--*stack_ptr];
++        dstate->loc = saveloc;
++        ALOGV("DW_CFA_restore_state: stacktop moves to %d", *stack_ptr);
++        break;
++    case DW_CFA_def_cfa:
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++        if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++        dstate->cfa_reg = reg;
++        dstate->cfa_off = offset;
++        ALOGV("DW_CFA_def_cfa: %x(r%d)", offset, reg);
++        break;
++    case DW_CFA_def_cfa_register:
++        if (!try_get_uleb128(memory, ptr, &reg, cursor)) {
++            return false;
++        }
++        dstate->cfa_reg = reg;
++        ALOGV("DW_CFA_def_cfa_register: r%d", reg);
++        break;
++    case DW_CFA_def_cfa_offset:
++        if (!try_get_uleb128(memory, ptr, &offset, cursor)) {
++            return false;
++        }
++        dstate->cfa_off = offset;
++        ALOGV("DW_CFA_def_cfa_offset: %x", offset);
++        break;
++    default:
++        ALOGE("unrecognized DW_CFA_* instruction: 0x%x", inst);
++        return false;
++    }
++    return true;
++}
++
++/* Restoring particular register value based on dwarf state. */
++static bool get_old_register_value(const memory_t* memory, uint32_t cfa,
++                                   dwarf_state_t* dstate, uint8_t reg,
++                                   unwind_state_t* state, unwind_state_t* newstate) {
++    uint32_t addr;
++    switch (dstate->regs[reg].rule) {
++    case 0:
++        /* We don't have dstate updated for this register, so assuming value kept the same.
++           Normally we should look into state and return current value as the old one
++           but we don't have all registers in state to handle this properly */
++        ALOGV("get_old_register_value: value of r%d is the same", reg);
++        // for SP if it's not updated by dwarf rule we assume it's equal to CFA
++        // for PC if it's not updated by dwarf rule we assume it's equal to RA
++        if (reg == DWARF_SP) {
++            ALOGV("get_old_register_value: adjusting sp to CFA: 0x%x", cfa);
++            newstate->reg[reg] = cfa;
++        } else if (reg == DWARF_PC) {
++            ALOGV("get_old_register_value: adjusting PC to RA: 0x%x", newstate->reg[DWARF_RA]);
++            newstate->reg[reg] = newstate->reg[DWARF_RA];
++        } else {
++            newstate->reg[reg] = state->reg[reg];
++        }
++        break;
++    case 'o':
++        addr = cfa + (int32_t)dstate->regs[reg].value;
++        if (!try_get_word(memory, addr, &newstate->reg[reg])) {
++            ALOGE("get_old_register_value: can't read from 0x%x", addr);
++            return false;
++        }
++        ALOGV("get_old_register_value: r%d at 0x%x is 0x%x", reg, addr, newstate->reg[reg]);
++        break;
++    case 'r':
++        /* We don't have all registers in state so don't even try to look at 'r' */
++        ALOGE("get_old_register_value: register lookup not implemented yet");
++        break;
++    default:
++        ALOGE("get_old_register_value: unexpected rule:%c value:%d for register %d",
++              dstate->regs[reg].rule, (int32_t)dstate->regs[reg].value, reg);
++        return false;
++    }
++    return true;
++}
++
++/* Updaing state based on dwarf state. */
++static bool update_state(const memory_t* memory, unwind_state_t* state,
++                         dwarf_state_t* dstate) {
++    unwind_state_t newstate;
++    /* We can restore more registers here if we need them. Meanwile doing minimal work here. */
++    /* Getting CFA. */
++    uintptr_t cfa = 0;
++    if (dstate->cfa_reg == DWARF_SP) {
++        cfa = state->reg[DWARF_SP] + dstate->cfa_off;
++    } else if (dstate->cfa_reg == DWARF_FP) {
++        cfa = state->reg[DWARF_FP] + dstate->cfa_off;
++    } else {
++        ALOGE("update_state: unexpected CFA register: %d", dstate->cfa_reg);
++        return false;
++    }
++    ALOGV("update_state: new CFA: 0x%x", cfa);
++
++    /* Update registers. Order is important to allow RA to propagate to PC */
++    /* Getting FP. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_FP, state, &newstate)) return false;
++    /* Getting SP. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_SP, state, &newstate)) return false;
++    /* Getting RA. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_RA, state, &newstate)) return false;
++    /* Getting PC. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_PC, state, &newstate)) return false;
++
++    ALOGV("update_state: PC: 0x%x; restore PC: 0x%x", state->reg[DWARF_PC], newstate.reg[DWARF_PC]);
++    ALOGV("update_state: RA: 0x%x; restore RA: 0x%x", state->reg[DWARF_RA], newstate.reg[DWARF_RA]);
++    ALOGV("update_state: FP: 0x%x; restore FP: 0x%x", state->reg[DWARF_FP], newstate.reg[DWARF_FP]);
++    ALOGV("update_state: SP: 0x%x; restore SP: 0x%x", state->reg[DWARF_SP], newstate.reg[DWARF_SP]);
++
++    if (newstate.reg[DWARF_PC] == 0)
++        return false;
++
++    /* End backtrace if registers do not change */
++    if ((state->reg[DWARF_PC] == newstate.reg[DWARF_PC]) &&
++        (state->reg[DWARF_RA] == newstate.reg[DWARF_RA]) &&
++        (state->reg[DWARF_FP] == newstate.reg[DWARF_FP]) &&
++        (state->reg[DWARF_SP] == newstate.reg[DWARF_SP]))
++        return false;
++
++    *state = newstate;
++    return true;
++}
++
++/* Execute CIE and FDE instructions for FDE found with find_fde. */
++static bool execute_fde(const memory_t* memory,
++                        uintptr_t fde,
++                        unwind_state_t* state) {
++    uint32_t fde_length = 0;
++    uint32_t cie_length = 0;
++    uintptr_t cie = 0;
++    uintptr_t cie_offset = 0;
++    cie_info_t cie_i;
++    cie_info_t* cie_info = &cie_i;
++    fde_info_t fde_i;
++    fde_info_t* fde_info = &fde_i;
++    dwarf_state_t dwarf_state;
++    dwarf_state_t* dstate = &dwarf_state;
++    dwarf_state_t stack[DWARF_STATES_STACK];
++    uint8_t stack_ptr = 0;
++
++    memset(dstate, 0, sizeof(dwarf_state_t));
++    memset(cie_info, 0, sizeof(cie_info_t));
++    memset(fde_info, 0, sizeof(fde_info_t));
++
++    /* Read common CIE or FDE area:
++       1st word is length;
++       2nd word is ID: 0 for CIE, CIE pointer for FDE.
++    */
++    if (!try_get_word(memory, fde, &fde_length)) {
++        return false;
++    }
++    if ((int32_t)fde_length == -1) {
++        ALOGV("execute_fde: 64-bit dwarf detected, not implemented yet");
++        return false;
++    }
++    if (!try_get_word(memory, fde + 4, &cie_offset)) {
++        return false;
++    }
++    if (cie_offset == 0) {
++        /* This is CIE. We shouldn't be here normally. */
++        cie = fde;
++        cie_length = fde_length;
++    } else {
++        /* Find CIE. */
++        /* Positive cie_offset goes backward from current field. */
++        cie = fde + 4 - cie_offset;
++        if (!try_get_word(memory, cie, &cie_length)) {
++            return false;
++        }
++        if ((int32_t)cie_length == -1) {
++            ALOGV("execute_fde: 64-bit dwarf detected, not implemented yet");
++            return false;
++        }
++        if (!try_get_word(memory, cie + 4, &cie_offset)) {
++            return false;
++        }
++        if (cie_offset != 0) {
++            ALOGV("execute_fde: can't find CIE");
++            return false;
++        }
++    }
++    ALOGV("execute_fde: FDE length: %d", fde_length);
++    ALOGV("execute_fde: CIE pointer: %x", cie);
++    ALOGV("execute_fde: CIE length: %d", cie_length);
++
++    /* Read CIE:
++       Augmentation independent:
++       1st byte is version;
++       next x bytes is /0 terminated augmentation string;
++       next x bytes is unsigned LEB128 encoded code alignment factor;
++       next x bytes is signed LEB128 encoded data alignment factor;
++       next 1 (CIE version 1) or x (CIE version 3 unsigned LEB128) bytes is return register column;
++       Augmentation dependent:
++       if 'z' next x bytes is unsigned LEB128 encoded augmentation data size;
++       if 'L' next 1 byte is LSDA encoding;
++       if 'R' next 1 byte is FDE encoding;
++       if 'S' CIE represents signal handler stack frame;
++       if 'P' next 1 byte is personality encoding folowed by personality function pointer;
++       Next x bytes is CIE program.
++    */
++
++    uint32_t c = 8;
++    if (!try_get_byte(memory, cie, &cie_info->version, &c)) {
++        return false;
++    }
++    ALOGV("execute_fde: CIE version: %d", cie_info->version);
++    uint8_t ch;
++    do {
++        if (!try_get_byte(memory, cie, &ch, &c)) {
++            return false;
++        }
++        switch (ch) {
++        case '\0': break;
++        case 'z': cie_info->aug_z = 1; break;
++        case 'L': cie_info->aug_L = 1; break;
++        case 'R': cie_info->aug_R = 1; break;
++        case 'S': cie_info->aug_S = 1; break;
++        case 'P': cie_info->aug_P = 1; break;
++        default:
++            ALOGV("execute_fde: Unrecognized CIE augmentation char: '%c'", ch);
++            return false;
++            break;
++        }
++    } while (ch);
++    if (!try_get_uleb128(memory, cie, &cie_info->code_align, &c)) {
++        return false;
++    }
++    if (!try_get_sleb128(memory, cie, &cie_info->data_align, &c)) {
++        return false;
++    }
++    if (cie_info->version >= 3) {
++        if (!try_get_uleb128(memory, cie, &cie_info->reg, &c)) {
++            return false;
++        }
++    } else {
++        if (!try_get_byte(memory, cie, (uint8_t*)&cie_info->reg, &c)) {
++            return false;
++        }
++    }
++    ALOGV("execute_fde: CIE code alignment factor: %d", cie_info->code_align);
++    ALOGV("execute_fde: CIE data alignment factor: %d", cie_info->data_align);
++    if (cie_info->aug_z) {
++        if (!try_get_uleb128(memory, cie, &cie_info->aug_z, &c)) {
++            return false;
++        }
++    }
++    if (cie_info->aug_L) {
++        if (!try_get_byte(memory, cie, &cie_info->aug_L, &c)) {
++            return false;
++        }
++    } else {
++        /* Default encoding. */
++        cie_info->aug_L = DW_EH_PE_absptr;
++    }
++    if (cie_info->aug_R) {
++        if (!try_get_byte(memory, cie, &cie_info->aug_R, &c)) {
++            return false;
++        }
++    } else {
++        /* Default encoding. */
++        cie_info->aug_R = DW_EH_PE_absptr;
++    }
++    if (cie_info->aug_P) {
++        /* Get encoding of personality routine pointer. We don't use it now. */
++        if (!try_get_byte(memory, cie, (uint8_t*)&cie_info->aug_P, &c)) {
++            return false;
++        }
++        /* Get routine pointer. */
++        if (!read_dwarf(memory, cie, &cie_info->aug_P, (uint8_t)cie_info->aug_P, &c)) {
++            return false;
++        }
++    }
++    /* CIE program. */
++    /* Length field itself (4 bytes) is not included into length. */
++    stack[0] = *dstate;
++    stack_ptr = 1;
++    while (c < cie_length + 4) {
++        if (!execute_dwarf(memory, cie, cie_info, dstate, &c, stack, &stack_ptr)) {
++            return false;
++        }
++    }
++
++    /* We went directly to CIE. Normally it shouldn't occur. */
++    if (cie == fde) return true;
++
++    /* Go back to FDE. */
++    c = 8;
++    /* Read FDE:
++       Augmentation independent:
++       next x bytes (encoded as specified in CIE) is FDE starting address;
++       next x bytes (encoded as specified in CIE) is FDE number of instructions covered;
++       Augmentation dependent:
++       if 'z' next x bytes is unsigned LEB128 encoded augmentation data size;
++       if 'L' next x bytes is LSDA pointer (encoded as specified in CIE);
++       Next x bytes is FDE program.
++    */
++    if (!read_dwarf(memory, fde, &fde_info->start, (uint8_t)cie_info->aug_R, &c)) {
++        return false;
++    }
++    dstate->loc = fde_info->start;
++    ALOGV("execute_fde: FDE start: %x", dstate->loc);
++    if (!read_dwarf(memory, fde, &fde_info->length, 0, &c)) {
++        return false;
++    }
++    ALOGV("execute_fde: FDE length: %x", fde_info->length);
++    if (cie_info->aug_z) {
++        if (!try_get_uleb128(memory, fde, &fde_info->aug_z, &c)) {
++            return false;
++        }
++    }
++    if (cie_info->aug_L && cie_info->aug_L != DW_EH_PE_omit) {
++        if (!read_dwarf(memory, fde, &fde_info->aug_L, cie_info->aug_L, &c)) {
++            return false;
++        }
++    }
++    /* FDE program. */
++    /* Length field itself (4 bytes) is not included into length. */
++    /* Save CIE state as 0 element of stack. Used by DW_CFA_restore. */
++    stack[0] = *dstate;
++    stack_ptr = 1;
++    while (c < fde_length + 4 && state->reg[DWARF_PC] >= dstate->loc) {
++        if (!execute_dwarf(memory, fde, cie_info, dstate, &c, stack, &stack_ptr)) {
++            return false;
++        }
++        ALOGV("PC: %x, LOC: %x", state->reg[DWARF_PC], dstate->loc);
++    }
++
++    return update_state(memory, state, dstate);
++}
++
++static bool heuristic_state_update(const memory_t* memory, unwind_state_t* state)
++{
++    bool found_start = false;
++    int maxcheck = 1024;
++    int32_t stack_size = 0;
++    int32_t ra_offset = 0;
++    dwarf_state_t dwarf_state;
++    dwarf_state_t* dstate = &dwarf_state;
++
++    static struct {
++        uint32_t insn;
++        uint32_t mask;
++    } frame0sig[] = {
++        {0x3c1c0000, 0xffff0000}, /* lui     gp,xxxx */
++        {0x279c0000, 0xffff0000}, /* addiu   gp,gp,xxxx */
++        {0x039fe021, 0xffffffff}, /* addu    gp,gp,ra */
++    };
++    const int nframe0sig = sizeof(frame0sig)/sizeof(frame0sig[0]);
++    int f0 = nframe0sig;
++    memset(dstate, 0, sizeof(dwarf_state_t));
++
++    /* Search code backwards looking for function prologue */
++    for (uint32_t pc = state->reg[DWARF_PC]-4; maxcheck-- > 0 && !found_start; pc -= 4) {
++        uint32_t op;
++        int32_t immediate;
++
++        if (!try_get_word(memory, pc, &op))
++            return false;
++
++        // ALOGV("@0x%08x: 0x%08x\n", pc, op);
++
++        // Check for frame 0 signature
++        if ((op & frame0sig[f0].mask) == frame0sig[f0].insn) {
++            if (f0 == 0)
++                return false;
++            f0--;
++        }
++        else {
++            f0 = nframe0sig;
++        }
++
++        switch (op & 0xffff0000) {
++        case 0x27bd0000: // addiu sp, imm
++            // looking for stack being decremented
++            immediate = (((int32_t)op) << 16) >> 16;
++            if (immediate < 0) {
++                stack_size = -immediate;
++                ALOGV("@0x%08x: found stack adjustment=%d\n", pc, stack_size);
++            }
++            break;
++        case 0x039f0000: // e021
++
++        case 0xafbf0000: // sw ra, imm(sp)
++            ra_offset = (((int32_t)op) << 16) >> 16;
++            ALOGV("@0x%08x: found ra offset=%d\n", pc, ra_offset);
++            break;
++        case 0x3c1c0000: // lui gp
++            ALOGV("@0x%08x: found function boundary", pc);
++            found_start = true;
++            break;
++        default:
++            break;
++        }
++    }
++
++    dstate->cfa_reg = DWARF_SP;
++    dstate->cfa_off = stack_size;
++
++    if (ra_offset) {
++        dstate->regs[DWARF_RA].rule = 'o';
++        dstate->regs[DWARF_RA].value = -stack_size + ra_offset;
++    }
++
++    return update_state(memory, state, dstate);
++}
++
++static ssize_t unwind_backtrace_common(const memory_t* memory,
++        const map_info_t* map_info_list,
++        unwind_state_t* state, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth) {
++
++    size_t ignored_frames = 0;
++    size_t returned_frames = 0;
++
++    ALOGV("Unwinding tid: %d", memory->tid);
++    ALOGV("PC: %x", state->reg[DWARF_PC]);
++    ALOGV("RA: %x", state->reg[DWARF_RA]);
++    ALOGV("FP: %x", state->reg[DWARF_FP]);
++    ALOGV("SP: %x", state->reg[DWARF_SP]);
++
++    for (size_t index = 0; returned_frames < max_depth; index++) {
++        uintptr_t fde = find_fde(memory, map_info_list, state->reg[DWARF_PC]);
++        backtrace_frame_t* frame = add_backtrace_entry(
++            index ? rewind_pc_arch(memory, state->reg[DWARF_PC]) : state->reg[DWARF_PC],
++            backtrace, ignore_depth, max_depth,
++            &ignored_frames, &returned_frames);
++        uint32_t stack_top = state->reg[DWARF_SP];
++
++        if (fde) {
++            /* Use FDE to update state */
++            if (!execute_fde(memory, fde, state))
++                break;
++        }
++        else {
++            /* FDE is not found, update state heuristically */
++            if (!heuristic_state_update(memory, state))
++                break;
++        }
++
++        if (frame) {
++            frame->stack_top = stack_top;
++            if (stack_top < state->reg[DWARF_SP]) {
++                frame->stack_size = state->reg[DWARF_SP] - stack_top;
++            }
++        }
++        ALOGV("Stack: 0x%x ... 0x%x - %d bytes", frame->stack_top, state->reg[DWARF_SP], frame->stack_size);
++    }
++    return returned_frames;
++}
++
++ssize_t unwind_backtrace_signal_arch(siginfo_t* siginfo __attribute__((unused)), void* sigcontext,
++        const map_info_t* map_info_list,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++    const ucontext_t* uc = (const ucontext_t*)sigcontext;
++
++    unwind_state_t state;
++    state.reg[DWARF_PC] = uc->uc_mcontext.pc;
++    state.reg[DWARF_RA] = uc->uc_mcontext.gregs[REG_RA];
++    state.reg[DWARF_FP] = uc->uc_mcontext.gregs[REG_S8];
++    state.reg[DWARF_SP] = uc->uc_mcontext.gregs[REG_SP];
++
++    ALOGV("unwind_backtrace_signal_arch: "
++          "ignore_depth=%d max_depth=%d pc=0x%08x sp=0x%08x ra=0x%08x\n",
++          ignore_depth, max_depth, state.reg[DWARF_PC], state.reg[DWARF_SP], state.reg[DWARF_RA]);
++
++    memory_t memory;
++    init_memory(&memory, map_info_list);
++    return unwind_backtrace_common(&memory, map_info_list,
++                                   &state, backtrace, ignore_depth, max_depth);
++}
++
++ssize_t unwind_backtrace_ptrace_arch(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++
++    user_regs_struct regs;
++    if (ptrace(PTRACE_GETREGS, tid, 0, &regs)) {
++        return -1;
++    }
++
++    unwind_state_t state;
++    state.reg[DWARF_PC] = regs.epc;
++    state.reg[DWARF_RA] = regs.regs[REG_RA];
++    state.reg[DWARF_FP] = regs.regs[REG_S8];
++    state.reg[DWARF_SP] = regs.regs[REG_SP];
++
++    ALOGV("unwind_backtrace_ptrace_arch: "
++          "ignore_depth=%d max_depth=%d pc=0x%08x sp=0x%08x ra=0x%08x\n",
++          ignore_depth, max_depth, state.reg[DWARF_PC], state.reg[DWARF_SP], state.reg[DWARF_RA]);
++
++    memory_t memory;
++    init_memory_ptrace(&memory, tid);
++    return unwind_backtrace_common(&memory, context->map_info_list,
++                                   &state, backtrace, ignore_depth, max_depth);
++}
+diff --git a/libcorkscrew/arch-mips/dwarf.h b/libcorkscrew/arch-mips/dwarf.h
+new file mode 100644
+index 00000000..8504ea0a
+--- /dev/null
++++ b/libcorkscrew/arch-mips/dwarf.h
+@@ -0,0 +1,187 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/*
++ * Dwarf2 data encoding flags.
++ */
++
++#define DW_EH_PE_absptr         0x00
++#define DW_EH_PE_omit           0xff
++#define DW_EH_PE_uleb128        0x01
++#define DW_EH_PE_udata2         0x02
++#define DW_EH_PE_udata4         0x03
++#define DW_EH_PE_udata8         0x04
++#define DW_EH_PE_sleb128        0x09
++#define DW_EH_PE_sdata2         0x0A
++#define DW_EH_PE_sdata4         0x0B
++#define DW_EH_PE_sdata8         0x0C
++#define DW_EH_PE_signed         0x08
++#define DW_EH_PE_pcrel          0x10
++#define DW_EH_PE_textrel        0x20
++#define DW_EH_PE_datarel        0x30
++#define DW_EH_PE_funcrel        0x40
++#define DW_EH_PE_aligned        0x50
++#define DW_EH_PE_indirect       0x80
++
++/*
++ * Dwarf2 call frame instructions.
++ */
++
++typedef enum {
++    DW_CFA_advance_loc = 0x40,
++    DW_CFA_offset = 0x80,
++    DW_CFA_restore = 0xc0,
++    DW_CFA_nop = 0x00,
++    DW_CFA_set_loc = 0x01,
++    DW_CFA_advance_loc1 = 0x02,
++    DW_CFA_advance_loc2 = 0x03,
++    DW_CFA_advance_loc4 = 0x04,
++    DW_CFA_offset_extended = 0x05,
++    DW_CFA_restore_extended = 0x06,
++    DW_CFA_undefined = 0x07,
++    DW_CFA_same_value = 0x08,
++    DW_CFA_register = 0x09,
++    DW_CFA_remember_state = 0x0a,
++    DW_CFA_restore_state = 0x0b,
++    DW_CFA_def_cfa = 0x0c,
++    DW_CFA_def_cfa_register = 0x0d,
++    DW_CFA_def_cfa_offset = 0x0e
++} dwarf_CFA;
++
++/*
++ * eh_frame_hdr information.
++*/
++
++typedef struct {
++      uint8_t version;
++      uint8_t eh_frame_ptr_enc;
++      uint8_t fde_count_enc;
++      uint8_t fde_table_enc;
++      uintptr_t eh_frame_ptr;
++      uint32_t fde_count;
++} eh_frame_hdr_info_t;
++
++/*
++ * CIE information.
++*/
++
++typedef struct {
++      uint8_t version;
++      uint32_t code_align;
++      uint32_t data_align;
++      uint32_t reg;
++      uint32_t aug_z;
++      uint8_t aug_L;
++      uint8_t aug_R;
++      uint8_t aug_S;
++      uint32_t aug_P;
++} cie_info_t;
++
++/*
++ * FDE information.
++*/
++
++typedef struct {
++      uint32_t start;
++      uint32_t length; // number of instructions covered by FDE
++      uint32_t aug_z;
++      uint32_t aug_L;
++} fde_info_t;
++
++/*
++ * Dwarf state.
++*/
++
++/* Stack of states: required for DW_CFA_remember_state/DW_CFA_restore_state
++   30 should be enough */
++#define DWARF_STATES_STACK 30
++
++typedef struct {
++    char rule;         // rule: o - offset(value); r - register(value)
++    uint32_t value;    // value
++} reg_rule_t;
++
++/* Dwarf preserved number of registers for mips */
++typedef enum
++  {
++    UNW_MIPS_R0,
++    UNW_MIPS_R1,
++    UNW_MIPS_R2,
++    UNW_MIPS_R3,
++    UNW_MIPS_R4,
++    UNW_MIPS_R5,
++    UNW_MIPS_R6,
++    UNW_MIPS_R7,
++    UNW_MIPS_R8,
++    UNW_MIPS_R9,
++    UNW_MIPS_R10,
++    UNW_MIPS_R11,
++    UNW_MIPS_R12,
++    UNW_MIPS_R13,
++    UNW_MIPS_R14,
++    UNW_MIPS_R15,
++    UNW_MIPS_R16,
++    UNW_MIPS_R17,
++    UNW_MIPS_R18,
++    UNW_MIPS_R19,
++    UNW_MIPS_R20,
++    UNW_MIPS_R21,
++    UNW_MIPS_R22,
++    UNW_MIPS_R23,
++    UNW_MIPS_R24,
++    UNW_MIPS_R25,
++    UNW_MIPS_R26,
++    UNW_MIPS_R27,
++    UNW_MIPS_R28,
++    UNW_MIPS_R29,
++    UNW_MIPS_R30,
++    UNW_MIPS_R31,
++
++    UNW_MIPS_PC = 34,
++
++    /* FIXME: Other registers!  */
++
++    /* For MIPS, the CFA is the value of SP (r29) at the call site in the
++       previous frame.  */
++    UNW_MIPS_CFA,
++
++    UNW_TDEP_LASTREG,
++
++    UNW_TDEP_LAST_REG = UNW_MIPS_R31,
++
++    UNW_TDEP_IP = UNW_MIPS_R31,
++    UNW_TDEP_SP = UNW_MIPS_R29,
++    UNW_TDEP_EH = UNW_MIPS_R0   /* FIXME.  */
++
++  }
++mips_regnum_t;
++
++#define DWARF_REGISTERS UNW_TDEP_LASTREG
++
++typedef struct {
++    uintptr_t loc;     // location (ip)
++    uint8_t cfa_reg;   // index of register where CFA location stored
++    intptr_t cfa_off;  // offset
++    reg_rule_t regs[DWARF_REGISTERS]; // dwarf preserved registers for mips
++} dwarf_state_t;
++
++/* DWARF registers we are caring about. */
++
++
++#define DWARF_SP      UNW_MIPS_R29
++#define DWARF_RA      UNW_MIPS_R31
++#define DWARF_PC      UNW_MIPS_PC
++#define DWARF_FP      UNW_MIPS_CFA /* FIXME is this correct? */
+diff --git a/libcorkscrew/arch-mips/ptrace-mips.c b/libcorkscrew/arch-mips/ptrace-mips.c
+new file mode 100644
+index 00000000..ba3b60a3
+--- /dev/null
++++ b/libcorkscrew/arch-mips/ptrace-mips.c
+@@ -0,0 +1,77 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../ptrace-arch.h"
++
++#include <stddef.h>
++#include <elf.h>
++#include <cutils/log.h>
++
++static void load_eh_frame_hdr(pid_t pid, map_info_t* mi, uintptr_t *eh_frame_hdr) {
++    uint32_t elf_phoff;
++    uint32_t elf_phentsize_ehsize;
++    uint32_t elf_shentsize_phnum;
++
++
++    try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phoff), &elf_phoff);
++    ALOGV("reading 0x%08x elf_phoff:%x",  mi->start + offsetof(Elf32_Ehdr, e_phoff), elf_phoff);
++    try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_ehsize), &elf_phentsize_ehsize);
++    ALOGV("reading 0x%08x elf_phentsize_ehsize:%x", mi->start + offsetof(Elf32_Ehdr, e_ehsize), elf_phentsize_ehsize);
++    try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phnum), &elf_shentsize_phnum);
++    ALOGV("reading 0x%08x elf_shentsize_phnum:%x", mi->start + offsetof(Elf32_Ehdr, e_phnum), elf_shentsize_phnum);
++
++
++
++    if (try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phoff), &elf_phoff)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_ehsize),
++                    &elf_phentsize_ehsize)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phnum),
++                    &elf_shentsize_phnum)) {
++        uint32_t elf_phentsize = elf_phentsize_ehsize >> 16;
++        uint32_t elf_phnum = elf_shentsize_phnum & 0xffff;
++        for (uint32_t i = 0; i < elf_phnum; i++) {
++            uintptr_t elf_phdr = mi->start + elf_phoff + i * elf_phentsize;
++            uint32_t elf_phdr_type;
++            if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_type), &elf_phdr_type)) {
++                break;
++            }
++            if (elf_phdr_type == PT_GNU_EH_FRAME) {
++                uint32_t elf_phdr_offset;
++                if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_offset),
++                        &elf_phdr_offset)) {
++                    break;
++                }
++                *eh_frame_hdr = mi->start + elf_phdr_offset;
++                ALOGV("Parsed .eh_frame_hdr info for %s: start=0x%08x", mi->name, *eh_frame_hdr);
++                return;
++            }
++        }
++    }
++    *eh_frame_hdr = 0;
++}
++
++void load_ptrace_map_info_data_arch(pid_t pid, map_info_t* mi, map_info_data_t* data) {
++    ALOGV("load_ptrace_map_info_data_arch");
++    load_eh_frame_hdr(pid, mi, &data->eh_frame_hdr);
++}
++
++void free_ptrace_map_info_data_arch(map_info_t* mi __attribute__((unused)),
++                                    map_info_data_t* data __attribute__((unused))) {
++    ALOGV("free_ptrace_map_info_data_arch");
++}
+diff --git a/libcorkscrew/arch-x86/backtrace-x86.c b/libcorkscrew/arch-x86/backtrace-x86.c
+new file mode 100755
+index 00000000..df486de4
+--- /dev/null
++++ b/libcorkscrew/arch-x86/backtrace-x86.c
+@@ -0,0 +1,823 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/*
++ * Backtracing functions for x86.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../backtrace-arch.h"
++#include "../backtrace-helper.h"
++#include "../ptrace-arch.h"
++#include <corkscrew/ptrace.h>
++#include "dwarf.h"
++
++#include <stdlib.h>
++#include <signal.h>
++#include <stdbool.h>
++#include <limits.h>
++#include <errno.h>
++#include <string.h>
++#include <sys/ptrace.h>
++#include <cutils/log.h>
++
++#if defined(__APPLE__)
++
++#define _XOPEN_SOURCE
++#include <ucontext.h>
++
++#else
++
++// glibc has its own renaming of the Linux kernel's structures.
++#define __USE_GNU // For REG_EBP, REG_ESP, and REG_EIP.
++#include <ucontext.h>
++
++#endif
++
++/* Unwind state. */
++typedef struct {
++    uint32_t reg[DWARF_REGISTERS];
++} unwind_state_t;
++
++typedef struct {
++    backtrace_frame_t* backtrace;
++    size_t ignore_depth;
++    size_t max_depth;
++    size_t ignored_frames;
++    size_t returned_frames;
++    memory_t memory;
++} backtrace_state_t;
++
++uintptr_t rewind_pc_arch(const memory_t* memory __attribute__((unused)), uintptr_t pc) {
++    /* TODO: x86 instructions are 1-16 bytes, to define exact size of previous instruction
++       we have to disassemble from the function entry point up to pc.
++       Returning pc-1 is probably enough for now, the only drawback is that
++       it points somewhere between the first byte of instruction we are looking for and
++       the first byte of the next instruction. */
++
++    return pc-1;
++    /* TODO: We should adjust that for the signal frames and return pc for them instead of pc-1.
++       To recognize signal frames we should read cie_info property. */
++}
++
++/* Read byte through 4 byte cache. Usually we read byte by byte and updating cursor. */
++static bool try_get_byte(const memory_t* memory, uintptr_t ptr, uint8_t* out_value, uint32_t* cursor) {
++    static uintptr_t lastptr;
++    static uint32_t buf;
++
++    ptr += *cursor;
++
++    if (ptr < lastptr || lastptr + 3 < ptr) {
++        lastptr = (ptr >> 2) << 2;
++        if (!try_get_word(memory, lastptr, &buf)) {
++            return false;
++        }
++    }
++    *out_value = (uint8_t)((buf >> ((ptr & 3) * 8)) & 0xff);
++    ++*cursor;
++    return true;
++}
++
++/* Getting X bytes. 4 is maximum for now. */
++static bool try_get_xbytes(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint8_t bytes, uint32_t* cursor) {
++    uint32_t data = 0;
++    if (bytes > 4) {
++        ALOGE("can't read more than 4 bytes, trying to read %d", bytes);
++        return false;
++    }
++    for (int i = 0; i < bytes; i++) {
++        uint8_t buf;
++        if (!try_get_byte(memory, ptr, &buf, cursor)) {
++            return false;
++        }
++        data |= (uint32_t)buf << (i * 8);
++    }
++    *out_value = data;
++    return true;
++}
++
++/* Reads signed/unsigned LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_leb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor, bool sign_extend) {
++    uint8_t buf = 0;
++    uint32_t val = 0;
++    uint8_t c = 0;
++    do {
++       if (!try_get_byte(memory, ptr, &buf, cursor)) {
++           return false;
++       }
++       val |= ((uint32_t)buf & 0x7f) << (c * 7);
++       c++;
++    } while (buf & 0x80 && (c * 7) <= 32);
++    if (c * 7 > 32) {
++       ALOGE("%s: data exceeds expected 4 bytes maximum", __FUNCTION__);
++       return false;
++    }
++    if (sign_extend) {
++        if (buf & 0x40) {
++            val |= ((uint32_t)-1 << (c * 7));
++        }
++    }
++    *out_value = val;
++    return true;
++}
++
++/* Reads signed LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_sleb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor) {
++  return try_get_leb128(memory, ptr, out_value, cursor, true);
++}
++
++/* Reads unsigned LEB128 encoded data. From 1 to 4 bytes. */
++static bool try_get_uleb128(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint32_t* cursor) {
++  return try_get_leb128(memory, ptr, out_value, cursor, false);
++}
++
++/* Getting data encoded by dwarf encodings. */
++static bool read_dwarf(const memory_t* memory, uintptr_t ptr, uint32_t* out_value, uint8_t encoding, uint32_t* cursor) {
++    uint32_t data = 0;
++    bool issigned = true;
++    uintptr_t addr = ptr + *cursor;
++    /* Lower 4 bits is data type/size */
++    /* TODO: add more encodings if it becomes necessary */
++    switch (encoding & 0xf) {
++        case DW_EH_PE_absptr:
++            if (!try_get_xbytes(memory, ptr, &data, 4, cursor)) {
++                return false;
++            }
++            *out_value = data;
++            return true;
++        case DW_EH_PE_udata4:
++            issigned = false;
++        case DW_EH_PE_sdata4:
++            if (!try_get_xbytes(memory, ptr, &data, 4, cursor)) {
++                return false;
++            }
++            break;
++        default:
++            ALOGE("unrecognized dwarf lower part encoding: 0x%x", encoding);
++            return false;
++    }
++    /* Higher 4 bits is modifier */
++    /* TODO: add more encodings if it becomes necessary */
++    switch (encoding & 0xf0) {
++        case 0:
++            *out_value = data;
++            break;
++        case DW_EH_PE_pcrel:
++            if (issigned) {
++                *out_value = addr + (int32_t)data;
++            } else {
++                *out_value = addr + data;
++            }
++            break;
++        /* Assuming ptr is correct base to calculate datarel */
++        case DW_EH_PE_datarel:
++            if (issigned) {
++                *out_value = ptr + (int32_t)data;
++            } else {
++                *out_value = ptr + data;
++            }
++            break;
++        default:
++            ALOGE("unrecognized dwarf higher part encoding: 0x%x", encoding);
++            return false;
++    }
++    return true;
++}
++
++/* Having PC find corresponding FDE by reading .eh_frame_hdr section data. */
++static uintptr_t find_fde(const memory_t* memory,
++                          const map_info_t* map_info_list, uintptr_t pc) {
++    if (!pc) {
++        ALOGV("find_fde: pc is zero, no eh_frame");
++        return 0;
++    }
++    const map_info_t* mi = find_map_info(map_info_list, pc);
++    if (!mi) {
++        ALOGV("find_fde: no map info for pc:0x%x", pc);
++        return 0;
++    }
++    const map_info_data_t* midata = mi->data;
++    if (!midata) {
++        ALOGV("find_fde: no eh_frame_hdr for map: start=0x%x, end=0x%x", mi->start, mi->end);
++        return 0;
++    }
++
++    eh_frame_hdr_info_t eh_hdr_info;
++    memset(&eh_hdr_info, 0, sizeof(eh_frame_hdr_info_t));
++
++    /* Getting the first word of eh_frame_hdr:
++        1st byte is version;
++        2nd byte is encoding of pointer to eh_frames;
++        3rd byte is encoding of count of FDEs in lookup table;
++        4th byte is encoding of lookup table entries.
++    */
++    uintptr_t eh_frame_hdr = midata->eh_frame_hdr;
++    uint32_t c = 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.version, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.eh_frame_ptr_enc, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.fde_count_enc, &c)) return 0;
++    if (!try_get_byte(memory, eh_frame_hdr, &eh_hdr_info.fde_table_enc, &c)) return 0;
++
++    /* TODO: 3rd byte can be DW_EH_PE_omit, that means no lookup table available and we should
++       try to parse eh_frame instead. Not sure how often it may occur, skipping now.
++    */
++    if (eh_hdr_info.version != 1) {
++        ALOGV("find_fde: eh_frame_hdr version %d is not supported", eh_hdr_info.version);
++        return 0;
++    }
++    /* Getting the data:
++        2nd word is eh_frame pointer (normally not used, because lookup table has all we need);
++        3rd word is count of FDEs in the lookup table;
++        starting from 4 word there is FDE lookup table (pairs of PC and FDE pointer) sorted by PC;
++    */
++    if (!read_dwarf(memory, eh_frame_hdr, &eh_hdr_info.eh_frame_ptr, eh_hdr_info.eh_frame_ptr_enc, &c)) return 0;
++    if (!read_dwarf(memory, eh_frame_hdr, &eh_hdr_info.fde_count, eh_hdr_info.fde_count_enc, &c)) return 0;
++    ALOGV("find_fde: found %d FDEs", eh_hdr_info.fde_count);
++
++    int32_t low = 0;
++    int32_t high = eh_hdr_info.fde_count;
++    uintptr_t start = 0;
++    uintptr_t fde = 0;
++    /* eh_frame_hdr + c points to lookup table at this point. */
++    while (low <= high) {
++        uint32_t mid = (high + low)/2;
++        uint32_t entry = c + mid * 8;
++        if (!read_dwarf(memory, eh_frame_hdr, &start, eh_hdr_info.fde_table_enc, &entry)) return 0;
++        if (pc <= start) {
++            high = mid - 1;
++        } else {
++            low = mid + 1;
++        }
++    }
++    /* Value found is at high. */
++    if (high < 0) {
++        ALOGV("find_fde: pc %x is out of FDE bounds: %x", pc, start);
++        return 0;
++    }
++    c += high * 8;
++    if (!read_dwarf(memory, eh_frame_hdr, &start, eh_hdr_info.fde_table_enc, &c)) return 0;
++    if (!read_dwarf(memory, eh_frame_hdr, &fde, eh_hdr_info.fde_table_enc, &c)) return 0;
++    ALOGV("pc 0x%x, ENTRY %d: start=0x%x, fde=0x%x", pc, high, start, fde);
++    return fde;
++}
++
++/* Execute single dwarf instruction and update dwarf state accordingly. */
++static bool execute_dwarf(const memory_t* memory, uintptr_t ptr, cie_info_t* cie_info,
++                          dwarf_state_t* dstate, uint32_t* cursor,
++                          dwarf_state_t* stack, uint8_t* stack_ptr) {
++    uint8_t inst;
++    uint8_t op = 0;
++
++    if (!try_get_byte(memory, ptr, &inst, cursor)) {
++        return false;
++    }
++    ALOGV("DW_CFA inst: 0x%x", inst);
++
++    /* For some instructions upper 2 bits is opcode and lower 6 bits is operand. See dwarf-2.0 7.23. */
++    if (inst & 0xc0) {
++        op = inst & 0x3f;
++        inst &= 0xc0;
++    }
++
++    switch ((dwarf_CFA)inst) {
++        uint32_t reg = 0;
++        uint32_t offset = 0;
++        case DW_CFA_advance_loc:
++            dstate->loc += op * cie_info->code_align;
++            ALOGV("DW_CFA_advance_loc: %d to 0x%x", op, dstate->loc);
++            break;
++        case DW_CFA_offset:
++            if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++            dstate->regs[op].rule = 'o';
++            dstate->regs[op].value = offset * cie_info->data_align;
++            ALOGV("DW_CFA_offset: r%d = o(%d)", op, dstate->regs[op].value);
++            break;
++        case DW_CFA_restore:
++            dstate->regs[op].rule = stack->regs[op].rule;
++            dstate->regs[op].value = stack->regs[op].value;
++            ALOGV("DW_CFA_restore: r%d = %c(%d)", op, dstate->regs[op].rule, dstate->regs[op].value);
++            break;
++        case DW_CFA_nop:
++            break;
++        case DW_CFA_set_loc: // probably we don't have it on x86.
++            if (!try_get_xbytes(memory, ptr, &offset, 4, cursor)) return false;
++            if (offset < dstate->loc) {
++                ALOGE("DW_CFA_set_loc: attempt to move location backward");
++                return false;
++            }
++            dstate->loc = offset * cie_info->code_align;
++            ALOGV("DW_CFA_set_loc: %d to 0x%x", offset * cie_info->code_align, dstate->loc);
++            break;
++        case DW_CFA_advance_loc1:
++            if (!try_get_byte(memory, ptr, (uint8_t*)&offset, cursor)) return false;
++            dstate->loc += (uint8_t)offset * cie_info->code_align;
++            ALOGV("DW_CFA_advance_loc1: %d to 0x%x", (uint8_t)offset * cie_info->code_align, dstate->loc);
++            break;
++        case DW_CFA_advance_loc2:
++            if (!try_get_xbytes(memory, ptr, &offset, 2, cursor)) return false;
++            dstate->loc += (uint16_t)offset * cie_info->code_align;
++            ALOGV("DW_CFA_advance_loc2: %d to 0x%x", (uint16_t)offset * cie_info->code_align, dstate->loc);
++            break;
++        case DW_CFA_advance_loc4:
++            if (!try_get_xbytes(memory, ptr, &offset, 4, cursor)) return false;
++            dstate->loc += offset * cie_info->code_align;
++            ALOGV("DW_CFA_advance_loc4: %d to 0x%x", offset * cie_info->code_align, dstate->loc);
++            break;
++        case DW_CFA_offset_extended: // probably we don't have it on x86.
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++            if (reg >= DWARF_REGISTERS) {
++                ALOGE("DW_CFA_offset_extended: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++                return false;
++            }
++            dstate->regs[reg].rule = 'o';
++            dstate->regs[reg].value = offset * cie_info->data_align;
++            ALOGV("DW_CFA_offset_extended: r%d = o(%d)", reg, dstate->regs[reg].value);
++            break;
++        case DW_CFA_restore_extended: // probably we don't have it on x86.
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            if (reg >= DWARF_REGISTERS) {
++                ALOGE("DW_CFA_restore_extended: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++                return false;
++            }
++            dstate->regs[reg].rule = stack->regs[reg].rule;
++            dstate->regs[reg].value = stack->regs[reg].value;
++            ALOGV("DW_CFA_restore: r%d = %c(%d)", reg, dstate->regs[reg].rule, dstate->regs[reg].value);
++            break;
++        case DW_CFA_undefined: // probably we don't have it on x86.
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            if (reg >= DWARF_REGISTERS) {
++                ALOGE("DW_CFA_undefined: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++                return false;
++            }
++            dstate->regs[reg].rule = 'u';
++            dstate->regs[reg].value = 0;
++            ALOGV("DW_CFA_undefined: r%d", reg);
++            break;
++        case DW_CFA_same_value: // probably we don't have it on x86.
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            if (reg >= DWARF_REGISTERS) {
++                ALOGE("DW_CFA_undefined: r%d exceeds supported number of registers (%d)", reg, DWARF_REGISTERS);
++                return false;
++            }
++            dstate->regs[reg].rule = 's';
++            dstate->regs[reg].value = 0;
++            ALOGV("DW_CFA_same_value: r%d", reg);
++            break;
++        case DW_CFA_register: // probably we don't have it on x86.
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            /* that's new register actually, not offset */
++            if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++            if (reg >= DWARF_REGISTERS || offset >= DWARF_REGISTERS) {
++                ALOGE("DW_CFA_register: r%d or r%d exceeds supported number of registers (%d)", reg, offset, DWARF_REGISTERS);
++                return false;
++            }
++            dstate->regs[reg].rule = 'r';
++            dstate->regs[reg].value = offset;
++            ALOGV("DW_CFA_register: r%d = r(%d)", reg, dstate->regs[reg].value);
++            break;
++        case DW_CFA_remember_state:
++            if (*stack_ptr == DWARF_STATES_STACK) {
++                ALOGE("DW_CFA_remember_state: states stack overflow %d", *stack_ptr);
++                return false;
++            }
++            stack[(*stack_ptr)++] = *dstate;
++            ALOGV("DW_CFA_remember_state: stacktop moves to %d", *stack_ptr);
++            break;
++        case DW_CFA_restore_state:
++            /* We have CIE state saved at 0 position. It's not supposed to be taken
++               by DW_CFA_restore_state. */
++            if (*stack_ptr == 1) {
++                ALOGE("DW_CFA_restore_state: states stack is empty");
++                return false;
++            }
++            /* Don't touch location on restore. */
++            uintptr_t saveloc = dstate->loc;
++            *dstate = stack[--*stack_ptr];
++            dstate->loc = saveloc;
++            ALOGV("DW_CFA_restore_state: stacktop moves to %d", *stack_ptr);
++            break;
++        case DW_CFA_def_cfa:
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) return false;
++            if (!try_get_uleb128(memory, ptr, &offset, cursor)) return false;
++            dstate->cfa_reg = reg;
++            dstate->cfa_off = offset;
++            ALOGV("DW_CFA_def_cfa: %x(r%d)", offset, reg);
++            break;
++        case DW_CFA_def_cfa_register:
++            if (!try_get_uleb128(memory, ptr, &reg, cursor)) {
++                return false;
++            }
++            dstate->cfa_reg = reg;
++            ALOGV("DW_CFA_def_cfa_register: r%d", reg);
++            break;
++        case DW_CFA_def_cfa_offset:
++            if (!try_get_uleb128(memory, ptr, &offset, cursor)) {
++                return false;
++            }
++            dstate->cfa_off = offset;
++            ALOGV("DW_CFA_def_cfa_offset: %x", offset);
++            break;
++        default:
++            ALOGE("unrecognized DW_CFA_* instruction: 0x%x", inst);
++            return false;
++    }
++    return true;
++}
++
++/* Restoring particular register value based on dwarf state. */
++static bool get_old_register_value(const memory_t* memory, uint32_t cfa,
++                                   dwarf_state_t* dstate, uint8_t reg,
++                                   unwind_state_t* state, unwind_state_t* newstate) {
++    uint32_t addr;
++    switch (dstate->regs[reg].rule) {
++        case 0:
++            /* We don't have dstate updated for this register, so assuming value kept the same.
++               Normally we should look into state and return current value as the old one
++               but we don't have all registers in state to handle this properly */
++            ALOGV("get_old_register_value: value of r%d is the same", reg);
++            // for ESP if it's not updated by dwarf rule we assume it's equal to CFA
++            if (reg == DWARF_ESP) {
++                ALOGV("get_old_register_value: adjusting esp to CFA: 0x%x", cfa);
++                newstate->reg[reg] = cfa;
++            } else {
++                newstate->reg[reg] = state->reg[reg];
++            }
++            break;
++        case 'o':
++            addr = cfa + (int32_t)dstate->regs[reg].value;
++            if (!try_get_word(memory, addr, &newstate->reg[reg])) {
++                ALOGE("get_old_register_value: can't read from 0x%x", addr);
++                return false;
++            }
++            ALOGV("get_old_register_value: r%d at 0x%x is 0x%x", reg, addr, newstate->reg[reg]);
++            break;
++        case 'r':
++            /* We don't have all registers in state so don't even try to look at 'r' */
++            ALOGE("get_old_register_value: register lookup not implemented yet");
++            break;
++        default:
++            ALOGE("get_old_register_value: unexpected rule:%c value:%d for register %d",
++                   dstate->regs[reg].rule, (int32_t)dstate->regs[reg].value, reg);
++            return false;
++    }
++    return true;
++}
++
++/* Updaing state based on dwarf state. */
++static bool update_state(const memory_t* memory, unwind_state_t* state,
++                         dwarf_state_t* dstate) {
++    unwind_state_t newstate;
++    /* We can restore more registers here if we need them. Meanwile doing minimal work here. */
++    /* Getting CFA. */
++    uintptr_t cfa = 0;
++    if (dstate->cfa_reg == DWARF_ESP) {
++        cfa = state->reg[DWARF_ESP] + dstate->cfa_off;
++    } else if (dstate->cfa_reg == DWARF_EBP) {
++        cfa = state->reg[DWARF_EBP] + dstate->cfa_off;
++    } else {
++        ALOGE("update_state: unexpected CFA register: %d", dstate->cfa_reg);
++        return false;
++    }
++    ALOGV("update_state: new CFA: 0x%x", cfa);
++    /* Getting EIP. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_EIP, state, &newstate)) return false;
++    /* Getting EBP. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_EBP, state, &newstate)) return false;
++    /* Getting ESP. */
++    if (!get_old_register_value(memory, cfa, dstate, DWARF_ESP, state, &newstate)) return false;
++
++    ALOGV("update_state: IP:  0x%x; restore IP:  0x%x", state->reg[DWARF_EIP], newstate.reg[DWARF_EIP]);
++    ALOGV("update_state: EBP: 0x%x; restore EBP: 0x%x", state->reg[DWARF_EBP], newstate.reg[DWARF_EBP]);
++    ALOGV("update_state: ESP: 0x%x; restore ESP: 0x%x", state->reg[DWARF_ESP], newstate.reg[DWARF_ESP]);
++    *state = newstate;
++    return true;
++}
++
++/* Execute CIE and FDE instructions for FDE found with find_fde. */
++static bool execute_fde(const memory_t* memory,
++                        uintptr_t fde,
++                        unwind_state_t* state) {
++    uint32_t fde_length = 0;
++    uint32_t cie_length = 0;
++    uintptr_t cie = 0;
++    uintptr_t cie_offset = 0;
++    cie_info_t cie_i;
++    cie_info_t* cie_info = &cie_i;
++    fde_info_t fde_i;
++    fde_info_t* fde_info = &fde_i;
++    dwarf_state_t dwarf_state;
++    dwarf_state_t* dstate = &dwarf_state;
++    dwarf_state_t stack[DWARF_STATES_STACK];
++    uint8_t stack_ptr = 0;
++
++    memset(dstate, 0, sizeof(dwarf_state_t));
++    memset(cie_info, 0, sizeof(cie_info_t));
++    memset(fde_info, 0, sizeof(fde_info_t));
++
++    /* Read common CIE or FDE area:
++        1st word is length;
++        2nd word is ID: 0 for CIE, CIE pointer for FDE.
++    */
++    if (!try_get_word(memory, fde, &fde_length)) {
++        return false;
++    }
++    if ((int32_t)fde_length == -1) {
++        ALOGV("execute_fde: 64-bit dwarf detected, not implemented yet");
++        return false;
++    }
++    if (!try_get_word(memory, fde + 4, &cie_offset)) {
++        return false;
++    }
++    if (cie_offset == 0) {
++        /* This is CIE. We shouldn't be here normally. */
++        cie = fde;
++        cie_length = fde_length;
++    } else {
++        /* Find CIE. */
++        /* Positive cie_offset goes backward from current field. */
++        cie = fde + 4 - cie_offset;
++        if (!try_get_word(memory, cie, &cie_length)) {
++           return false;
++        }
++        if ((int32_t)cie_length == -1) {
++           ALOGV("execute_fde: 64-bit dwarf detected, not implemented yet");
++           return false;
++        }
++        if (!try_get_word(memory, cie + 4, &cie_offset)) {
++           return false;
++        }
++        if (cie_offset != 0) {
++           ALOGV("execute_fde: can't find CIE");
++           return false;
++        }
++    }
++    ALOGV("execute_fde: FDE length: %d", fde_length);
++    ALOGV("execute_fde: CIE pointer: %x", cie);
++    ALOGV("execute_fde: CIE length: %d", cie_length);
++
++    /* Read CIE:
++       Augmentation independent:
++        1st byte is version;
++        next x bytes is /0 terminated augmentation string;
++        next x bytes is unsigned LEB128 encoded code alignment factor;
++        next x bytes is signed LEB128 encoded data alignment factor;
++        next 1 (CIE version 1) or x (CIE version 3 unsigned LEB128) bytes is return register column;
++       Augmentation dependent:
++        if 'z' next x bytes is unsigned LEB128 encoded augmentation data size;
++        if 'L' next 1 byte is LSDA encoding;
++        if 'R' next 1 byte is FDE encoding;
++        if 'S' CIE represents signal handler stack frame;
++        if 'P' next 1 byte is personality encoding folowed by personality function pointer;
++       Next x bytes is CIE program.
++    */
++
++    uint32_t c = 8;
++    if (!try_get_byte(memory, cie, &cie_info->version, &c)) {
++       return false;
++    }
++    ALOGV("execute_fde: CIE version: %d", cie_info->version);
++    uint8_t ch;
++    do {
++        if (!try_get_byte(memory, cie, &ch, &c)) {
++           return false;
++        }
++        switch (ch) {
++           case '\0': break;
++           case 'z': cie_info->aug_z = 1; break;
++           case 'L': cie_info->aug_L = 1; break;
++           case 'R': cie_info->aug_R = 1; break;
++           case 'S': cie_info->aug_S = 1; break;
++           case 'P': cie_info->aug_P = 1; break;
++           default:
++              ALOGV("execute_fde: Unrecognized CIE augmentation char: '%c'", ch);
++              return false;
++              break;
++        }
++    } while (ch);
++    if (!try_get_uleb128(memory, cie, &cie_info->code_align, &c)) {
++        return false;
++    }
++    if (!try_get_sleb128(memory, cie, &cie_info->data_align, &c)) {
++        return false;
++    }
++    if (cie_info->version >= 3) {
++        if (!try_get_uleb128(memory, cie, &cie_info->reg, &c)) {
++            return false;
++        }
++    } else {
++        if (!try_get_byte(memory, cie, (uint8_t*)&cie_info->reg, &c)) {
++            return false;
++        }
++    }
++    ALOGV("execute_fde: CIE code alignment factor: %d", cie_info->code_align);
++    ALOGV("execute_fde: CIE data alignment factor: %d", cie_info->data_align);
++    if (cie_info->aug_z) {
++        if (!try_get_uleb128(memory, cie, &cie_info->aug_z, &c)) {
++            return false;
++        }
++    }
++    if (cie_info->aug_L) {
++        if (!try_get_byte(memory, cie, &cie_info->aug_L, &c)) {
++            return false;
++        }
++    } else {
++        /* Default encoding. */
++        cie_info->aug_L = DW_EH_PE_absptr;
++    }
++    if (cie_info->aug_R) {
++        if (!try_get_byte(memory, cie, &cie_info->aug_R, &c)) {
++            return false;
++        }
++    } else {
++        /* Default encoding. */
++        cie_info->aug_R = DW_EH_PE_absptr;
++    }
++    if (cie_info->aug_P) {
++        /* Get encoding of personality routine pointer. We don't use it now. */
++        if (!try_get_byte(memory, cie, (uint8_t*)&cie_info->aug_P, &c)) {
++            return false;
++        }
++        /* Get routine pointer. */
++        if (!read_dwarf(memory, cie, &cie_info->aug_P, (uint8_t)cie_info->aug_P, &c)) {
++            return false;
++        }
++    }
++    /* CIE program. */
++    /* Length field itself (4 bytes) is not included into length. */
++    stack[0] = *dstate;
++    stack_ptr = 1;
++    while (c < cie_length + 4) {
++        if (!execute_dwarf(memory, cie, cie_info, dstate, &c, stack, &stack_ptr)) {
++           return false;
++        }
++    }
++
++    /* We went directly to CIE. Normally it shouldn't occur. */
++    if (cie == fde) return true;
++
++    /* Go back to FDE. */
++    c = 8;
++    /* Read FDE:
++       Augmentation independent:
++        next x bytes (encoded as specified in CIE) is FDE starting address;
++        next x bytes (encoded as specified in CIE) is FDE number of instructions covered;
++       Augmentation dependent:
++        if 'z' next x bytes is unsigned LEB128 encoded augmentation data size;
++        if 'L' next x bytes is LSDA pointer (encoded as specified in CIE);
++       Next x bytes is FDE program.
++     */
++    if (!read_dwarf(memory, fde, &fde_info->start, (uint8_t)cie_info->aug_R, &c)) {
++        return false;
++    }
++    dstate->loc = fde_info->start;
++    ALOGV("execute_fde: FDE start: %x", dstate->loc);
++    if (!read_dwarf(memory, fde, &fde_info->length, 0, &c)) {
++        return false;
++    }
++    ALOGV("execute_fde: FDE length: %x", fde_info->length);
++    if (cie_info->aug_z) {
++        if (!try_get_uleb128(memory, fde, &fde_info->aug_z, &c)) {
++            return false;
++        }
++    }
++    if (cie_info->aug_L && cie_info->aug_L != DW_EH_PE_omit) {
++        if (!read_dwarf(memory, fde, &fde_info->aug_L, cie_info->aug_L, &c)) {
++            return false;
++        }
++    }
++    /* FDE program. */
++    /* Length field itself (4 bytes) is not included into length. */
++    /* Save CIE state as 0 element of stack. Used by DW_CFA_restore. */
++    stack[0] = *dstate;
++    stack_ptr = 1;
++    while (c < fde_length + 4 && state->reg[DWARF_EIP] >= dstate->loc) {
++        if (!execute_dwarf(memory, fde, cie_info, dstate, &c, stack, &stack_ptr)) {
++           return false;
++        }
++        ALOGV("IP: %x, LOC: %x", state->reg[DWARF_EIP], dstate->loc);
++    }
++
++    return update_state(memory, state, dstate);
++}
++
++static ssize_t unwind_backtrace_common(const memory_t* memory,
++        const map_info_t* map_info_list,
++        unwind_state_t* state, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth) {
++
++    size_t ignored_frames = 0;
++    size_t returned_frames = 0;
++
++    ALOGV("Unwinding tid: %d", memory->tid);
++    ALOGV("IP: %x", state->reg[DWARF_EIP]);
++    ALOGV("BP: %x", state->reg[DWARF_EBP]);
++    ALOGV("SP: %x", state->reg[DWARF_ESP]);
++
++    for (size_t index = 0; returned_frames < max_depth; index++) {
++        uintptr_t fde = find_fde(memory, map_info_list, state->reg[DWARF_EIP]);
++        /* FDE is not found, it may happen if stack is corrupted or calling wrong adress.
++           Getting return address from stack.
++        */
++        if (!fde) {
++            uint32_t ip;
++            ALOGV("trying to restore registers from stack");
++            if (!try_get_word(memory, state->reg[DWARF_EBP] + 4, &ip) ||
++                ip == state->reg[DWARF_EIP]) {
++                ALOGV("can't get IP from stack");
++                break;
++            }
++            /* We've been able to get IP from stack so recording the frame before continue. */
++            backtrace_frame_t* frame = add_backtrace_entry(
++                    index ? rewind_pc_arch(memory, state->reg[DWARF_EIP]) : state->reg[DWARF_EIP],
++                    backtrace, ignore_depth, max_depth,
++                    &ignored_frames, &returned_frames);
++            state->reg[DWARF_EIP] = ip;
++            state->reg[DWARF_ESP] = state->reg[DWARF_EBP] + 8;
++            if (!try_get_word(memory, state->reg[DWARF_EBP], &state->reg[DWARF_EBP])) {
++                ALOGV("can't get EBP from stack");
++                break;
++            }
++            ALOGV("restore IP: %x", state->reg[DWARF_EIP]);
++            ALOGV("restore BP: %x", state->reg[DWARF_EBP]);
++            ALOGV("restore SP: %x", state->reg[DWARF_ESP]);
++            continue;
++        }
++        backtrace_frame_t* frame = add_backtrace_entry(
++                index ? rewind_pc_arch(memory, state->reg[DWARF_EIP]) : state->reg[DWARF_EIP],
++                backtrace, ignore_depth, max_depth,
++                &ignored_frames, &returned_frames);
++
++        uint32_t stack_top = state->reg[DWARF_ESP];
++
++        if (!execute_fde(memory, fde, state)) break;
++
++        if (frame) {
++            frame->stack_top = stack_top;
++            if (stack_top < state->reg[DWARF_ESP]) {
++                frame->stack_size = state->reg[DWARF_ESP] - stack_top;
++            }
++        }
++        ALOGV("Stack: 0x%x ... 0x%x - %d bytes", frame->stack_top, state->reg[DWARF_ESP], frame->stack_size);
++    }
++    return returned_frames;
++}
++
++ssize_t unwind_backtrace_signal_arch(siginfo_t* siginfo __attribute__((unused)), void* sigcontext,
++        const map_info_t* map_info_list,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++    const ucontext_t* uc = (const ucontext_t*)sigcontext;
++
++    unwind_state_t state;
++#if defined(__APPLE__)
++    state.reg[DWARF_EBP] = uc->uc_mcontext->__ss.__ebp;
++    state.reg[DWARF_ESP] = uc->uc_mcontext->__ss.__esp;
++    state.reg[DWARF_EIP] = uc->uc_mcontext->__ss.__eip;
++#else
++    state.reg[DWARF_EBP] = uc->uc_mcontext.gregs[REG_EBP];
++    state.reg[DWARF_ESP] = uc->uc_mcontext.gregs[REG_ESP];
++    state.reg[DWARF_EIP] = uc->uc_mcontext.gregs[REG_EIP];
++#endif
++
++    memory_t memory;
++    init_memory(&memory, map_info_list);
++    return unwind_backtrace_common(&memory, map_info_list,
++            &state, backtrace, ignore_depth, max_depth);
++}
++
++ssize_t unwind_backtrace_ptrace_arch(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++#if defined(__APPLE__)
++    return -1;
++#else
++    pt_regs_x86_t regs;
++    if (ptrace(PTRACE_GETREGS, tid, 0, &regs)) {
++        return -1;
++    }
++
++    unwind_state_t state;
++    state.reg[DWARF_EBP] = regs.ebp;
++    state.reg[DWARF_EIP] = regs.eip;
++    state.reg[DWARF_ESP] = regs.esp;
++
++    memory_t memory;
++    init_memory_ptrace(&memory, tid);
++    return unwind_backtrace_common(&memory, context->map_info_list,
++            &state, backtrace, ignore_depth, max_depth);
++#endif
++}
+diff --git a/libcorkscrew/arch-x86/dwarf.h b/libcorkscrew/arch-x86/dwarf.h
+new file mode 100755
+index 00000000..962fc558
+--- /dev/null
++++ b/libcorkscrew/arch-x86/dwarf.h
+@@ -0,0 +1,140 @@
++/*
++ * Copyright (C) 2013 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/*
++ * Dwarf2 data encoding flags.
++ */
++
++#define DW_EH_PE_absptr         0x00
++#define DW_EH_PE_omit           0xff
++#define DW_EH_PE_uleb128        0x01
++#define DW_EH_PE_udata2         0x02
++#define DW_EH_PE_udata4         0x03
++#define DW_EH_PE_udata8         0x04
++#define DW_EH_PE_sleb128        0x09
++#define DW_EH_PE_sdata2         0x0A
++#define DW_EH_PE_sdata4         0x0B
++#define DW_EH_PE_sdata8         0x0C
++#define DW_EH_PE_signed         0x08
++#define DW_EH_PE_pcrel          0x10
++#define DW_EH_PE_textrel        0x20
++#define DW_EH_PE_datarel        0x30
++#define DW_EH_PE_funcrel        0x40
++#define DW_EH_PE_aligned        0x50
++#define DW_EH_PE_indirect       0x80
++
++/*
++ * Dwarf2 call frame instructions.
++ */
++
++typedef enum {
++    DW_CFA_advance_loc = 0x40,
++    DW_CFA_offset = 0x80,
++    DW_CFA_restore = 0xc0,
++    DW_CFA_nop = 0x00,
++    DW_CFA_set_loc = 0x01,
++    DW_CFA_advance_loc1 = 0x02,
++    DW_CFA_advance_loc2 = 0x03,
++    DW_CFA_advance_loc4 = 0x04,
++    DW_CFA_offset_extended = 0x05,
++    DW_CFA_restore_extended = 0x06,
++    DW_CFA_undefined = 0x07,
++    DW_CFA_same_value = 0x08,
++    DW_CFA_register = 0x09,
++    DW_CFA_remember_state = 0x0a,
++    DW_CFA_restore_state = 0x0b,
++    DW_CFA_def_cfa = 0x0c,
++    DW_CFA_def_cfa_register = 0x0d,
++    DW_CFA_def_cfa_offset = 0x0e
++} dwarf_CFA;
++
++/*
++ * eh_frame_hdr information.
++*/
++
++typedef struct {
++      uint8_t version;
++      uint8_t eh_frame_ptr_enc;
++      uint8_t fde_count_enc;
++      uint8_t fde_table_enc;
++      uintptr_t eh_frame_ptr;
++      uint32_t fde_count;
++} eh_frame_hdr_info_t;
++
++/*
++ * CIE information.
++*/
++
++typedef struct {
++      uint8_t version;
++      uint32_t code_align;
++      uint32_t data_align;
++      uint32_t reg;
++      uint32_t aug_z;
++      uint8_t aug_L;
++      uint8_t aug_R;
++      uint8_t aug_S;
++      uint32_t aug_P;
++} cie_info_t;
++
++/*
++ * FDE information.
++*/
++
++typedef struct {
++      uint32_t start;
++      uint32_t length; // number of instructions covered by FDE
++      uint32_t aug_z;
++      uint32_t aug_L;
++} fde_info_t;
++
++/*
++ * Dwarf state.
++*/
++
++/* Stack of states: required for DW_CFA_remember_state/DW_CFA_restore_state
++   30 should be enough */
++#define DWARF_STATES_STACK 30
++
++typedef struct {
++    char rule;         // rule: o - offset(value); r - register(value)
++    uint32_t value;    // value
++} reg_rule_t;
++
++/* Dwarf preserved number of registers for x86. */
++
++#define DWARF_REGISTERS 17
++
++typedef struct {
++    uintptr_t loc;     // location (ip)
++    uint8_t cfa_reg;   // index of register where CFA location stored
++    intptr_t cfa_off;  // offset
++    reg_rule_t regs[DWARF_REGISTERS]; // dwarf preserved registers for x86
++} dwarf_state_t;
++
++/* DWARF registers we are caring about. */
++
++#define DWARF_EAX     0
++#define DWARF_ECX     1
++#define DWARF_EDX     2
++#define DWARF_EBX     3
++#define DWARF_ESP     4
++#define DWARF_EBP     5
++#define DWARF_ESI     6
++#define DWARF_EDI     7
++#define DWARF_EIP     8
++
++
+diff --git a/libcorkscrew/arch-x86/ptrace-x86.c b/libcorkscrew/arch-x86/ptrace-x86.c
+new file mode 100755
+index 00000000..9c49b93c
+--- /dev/null
++++ b/libcorkscrew/arch-x86/ptrace-x86.c
+@@ -0,0 +1,64 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "../ptrace-arch.h"
++
++#include <stddef.h>
++#include <elf.h>
++#include <cutils/log.h>
++
++static void load_eh_frame_hdr(pid_t pid, map_info_t* mi, uintptr_t *eh_frame_hdr) {
++    uint32_t elf_phoff;
++    uint32_t elf_phentsize_ehsize;
++    uint32_t elf_shentsize_phnum;
++    if (try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phoff), &elf_phoff)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_ehsize),
++                    &elf_phentsize_ehsize)
++            && try_get_word_ptrace(pid, mi->start + offsetof(Elf32_Ehdr, e_phnum),
++                    &elf_shentsize_phnum)) {
++        uint32_t elf_phentsize = elf_phentsize_ehsize >> 16;
++        uint32_t elf_phnum = elf_shentsize_phnum & 0xffff;
++        for (uint32_t i = 0; i < elf_phnum; i++) {
++            uintptr_t elf_phdr = mi->start + elf_phoff + i * elf_phentsize;
++            uint32_t elf_phdr_type;
++            if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_type), &elf_phdr_type)) {
++                break;
++            }
++            if (elf_phdr_type == PT_GNU_EH_FRAME) {
++                uint32_t elf_phdr_offset;
++                if (!try_get_word_ptrace(pid, elf_phdr + offsetof(Elf32_Phdr, p_offset),
++                        &elf_phdr_offset)) {
++                    break;
++                }
++                *eh_frame_hdr = mi->start + elf_phdr_offset;
++                ALOGV("Parsed .eh_frame_hdr info for %s: start=0x%08x", mi->name, *eh_frame_hdr);
++                return;
++            }
++        }
++    }
++    *eh_frame_hdr = 0;
++}
++
++void load_ptrace_map_info_data_arch(pid_t pid, map_info_t* mi, map_info_data_t* data) {
++    load_eh_frame_hdr(pid, mi, &data->eh_frame_hdr);
++}
++
++void free_ptrace_map_info_data_arch(map_info_t* mi __attribute__((unused)),
++                                    map_info_data_t* data __attribute__((unused))) {
++}
+diff --git a/libcorkscrew/backtrace-arch.h b/libcorkscrew/backtrace-arch.h
+new file mode 100644
+index 00000000..a46f80b5
+--- /dev/null
++++ b/libcorkscrew/backtrace-arch.h
+@@ -0,0 +1,45 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* Architecture dependent functions. */
++
++#ifndef _CORKSCREW_BACKTRACE_ARCH_H
++#define _CORKSCREW_BACKTRACE_ARCH_H
++
++#include "ptrace-arch.h"
++#include <corkscrew/backtrace.h>
++
++#include <signal.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Rewind the program counter by one instruction. */
++uintptr_t rewind_pc_arch(const memory_t* memory, uintptr_t pc);
++
++ssize_t unwind_backtrace_signal_arch(siginfo_t* siginfo, void* sigcontext,
++        const map_info_t* map_info_list,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth);
++
++ssize_t unwind_backtrace_ptrace_arch(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_BACKTRACE_ARCH_H
+diff --git a/libcorkscrew/backtrace-helper.c b/libcorkscrew/backtrace-helper.c
+new file mode 100644
+index 00000000..bf9d3f3d
+--- /dev/null
++++ b/libcorkscrew/backtrace-helper.c
+@@ -0,0 +1,40 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "backtrace-helper.h"
++
++#include <cutils/log.h>
++
++backtrace_frame_t* add_backtrace_entry(uintptr_t pc, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth,
++        size_t* ignored_frames, size_t* returned_frames) {
++    if (*ignored_frames < ignore_depth) {
++        *ignored_frames += 1;
++        return NULL;
++    }
++    if (*returned_frames >= max_depth) {
++        return NULL;
++    }
++    backtrace_frame_t* frame = &backtrace[*returned_frames];
++    frame->absolute_pc = pc;
++    frame->stack_top = 0;
++    frame->stack_size = 0;
++    *returned_frames += 1;
++    return frame;
++}
+diff --git a/libcorkscrew/backtrace-helper.h b/libcorkscrew/backtrace-helper.h
+new file mode 100644
+index 00000000..4d8a8740
+--- /dev/null
++++ b/libcorkscrew/backtrace-helper.h
+@@ -0,0 +1,43 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* Backtrace helper functions. */
++
++#ifndef _CORKSCREW_BACKTRACE_HELPER_H
++#define _CORKSCREW_BACKTRACE_HELPER_H
++
++#include <corkscrew/backtrace.h>
++#include <sys/types.h>
++#include <stdbool.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/*
++ * Add a program counter to a backtrace if it will fit.
++ * Returns the newly added frame, or NULL if none.
++ */
++backtrace_frame_t* add_backtrace_entry(uintptr_t pc,
++        backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth,
++        size_t* ignored_frames, size_t* returned_frames);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_BACKTRACE_HELPER_H
+diff --git a/libcorkscrew/backtrace.c b/libcorkscrew/backtrace.c
+new file mode 100644
+index 00000000..f1dd61d7
+--- /dev/null
++++ b/libcorkscrew/backtrace.c
+@@ -0,0 +1,335 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "backtrace-arch.h"
++#include "backtrace-helper.h"
++#include "ptrace-arch.h"
++#include <corkscrew/map_info.h>
++#include <corkscrew/symbol_table.h>
++#include <corkscrew/ptrace.h>
++#include <corkscrew/demangle.h>
++
++#include <unistd.h>
++#include <signal.h>
++#include <stdlib.h>
++#include <string.h>
++#include <pthread.h>
++#include <unwind.h>
++#include <cutils/log.h>
++#include <cutils/atomic.h>
++
++#define __USE_GNU // For dladdr(3) in glibc.
++#include <dlfcn.h>
++
++#if defined(__BIONIC__)
++
++// Bionic implements and exports gettid but only implements tgkill.
++extern int tgkill(int tgid, int tid, int sig);
++
++#elif defined(__APPLE__)
++
++#include <sys/syscall.h>
++
++// Mac OS >= 10.6 has a system call equivalent to Linux's gettid().
++static pid_t gettid() {
++  return syscall(SYS_thread_selfid);
++}
++
++#else
++
++// glibc doesn't implement or export either gettid or tgkill.
++
++#include <unistd.h>
++#include <sys/syscall.h>
++
++static pid_t gettid() {
++  return syscall(__NR_gettid);
++}
++
++static int tgkill(int tgid, int tid, int sig) {
++  return syscall(__NR_tgkill, tgid, tid, sig);
++}
++
++#endif
++
++typedef struct {
++    backtrace_frame_t* backtrace;
++    size_t ignore_depth;
++    size_t max_depth;
++    size_t ignored_frames;
++    size_t returned_frames;
++    memory_t memory;
++} backtrace_state_t;
++
++static _Unwind_Reason_Code unwind_backtrace_callback(struct _Unwind_Context* context, void* arg) {
++    backtrace_state_t* state = (backtrace_state_t*)arg;
++    uintptr_t pc = _Unwind_GetIP(context);
++    if (pc) {
++        // TODO: Get information about the stack layout from the _Unwind_Context.
++        //       This will require a new architecture-specific function to query
++        //       the appropriate registers.  Current callers of unwind_backtrace
++        //       don't need this information, so we won't bother collecting it just yet.
++        add_backtrace_entry(rewind_pc_arch(&state->memory, pc), state->backtrace,
++                state->ignore_depth, state->max_depth,
++                &state->ignored_frames, &state->returned_frames);
++    }
++    return state->returned_frames < state->max_depth ? _URC_NO_REASON : _URC_END_OF_STACK;
++}
++
++ssize_t unwind_backtrace(backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++    ALOGV("Unwinding current thread %d.", gettid());
++
++    map_info_t* milist = acquire_my_map_info_list();
++
++    backtrace_state_t state;
++    state.backtrace = backtrace;
++    state.ignore_depth = ignore_depth;
++    state.max_depth = max_depth;
++    state.ignored_frames = 0;
++    state.returned_frames = 0;
++    init_memory(&state.memory, milist);
++
++    _Unwind_Reason_Code rc = _Unwind_Backtrace(unwind_backtrace_callback, &state);
++
++    release_my_map_info_list(milist);
++
++    if (state.returned_frames) {
++        return state.returned_frames;
++    }
++    return rc == _URC_END_OF_STACK ? 0 : -1;
++}
++
++#ifdef CORKSCREW_HAVE_ARCH
++static const int32_t STATE_DUMPING = -1;
++static const int32_t STATE_DONE = -2;
++static const int32_t STATE_CANCEL = -3;
++
++static pthread_mutex_t g_unwind_signal_mutex = PTHREAD_MUTEX_INITIALIZER;
++static volatile struct {
++    int32_t tid_state;
++    const map_info_t* map_info_list;
++    backtrace_frame_t* backtrace;
++    size_t ignore_depth;
++    size_t max_depth;
++    size_t returned_frames;
++} g_unwind_signal_state;
++
++static void unwind_backtrace_thread_signal_handler(int n __attribute__((unused)), siginfo_t* siginfo, void* sigcontext) {
++    if (!android_atomic_acquire_cas(gettid(), STATE_DUMPING, &g_unwind_signal_state.tid_state)) {
++        g_unwind_signal_state.returned_frames = unwind_backtrace_signal_arch(
++                siginfo, sigcontext,
++                g_unwind_signal_state.map_info_list,
++                g_unwind_signal_state.backtrace,
++                g_unwind_signal_state.ignore_depth,
++                g_unwind_signal_state.max_depth);
++        android_atomic_release_store(STATE_DONE, &g_unwind_signal_state.tid_state);
++    } else {
++        ALOGV("Received spurious SIGURG on thread %d that was intended for thread %d.",
++                gettid(), android_atomic_acquire_load(&g_unwind_signal_state.tid_state));
++    }
++}
++#endif
++
++ssize_t unwind_backtrace_thread(pid_t tid, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth) {
++    if (tid == gettid()) {
++        return unwind_backtrace(backtrace, ignore_depth + 1, max_depth);
++    }
++
++    ALOGV("Unwinding thread %d from thread %d.", tid, gettid());
++
++    // TODO: there's no tgkill(2) on Mac OS, so we'd either need the
++    // mach_port_t or the pthread_t rather than the tid.
++#if defined(CORKSCREW_HAVE_ARCH) && !defined(__APPLE__)
++    struct sigaction act;
++    struct sigaction oact;
++    memset(&act, 0, sizeof(act));
++    act.sa_sigaction = unwind_backtrace_thread_signal_handler;
++    act.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
++    sigemptyset(&act.sa_mask);
++
++    pthread_mutex_lock(&g_unwind_signal_mutex);
++    map_info_t* milist = acquire_my_map_info_list();
++
++    ssize_t frames = -1;
++    if (!sigaction(SIGURG, &act, &oact)) {
++        g_unwind_signal_state.map_info_list = milist;
++        g_unwind_signal_state.backtrace = backtrace;
++        g_unwind_signal_state.ignore_depth = ignore_depth;
++        g_unwind_signal_state.max_depth = max_depth;
++        g_unwind_signal_state.returned_frames = 0;
++        android_atomic_release_store(tid, &g_unwind_signal_state.tid_state);
++
++        // Signal the specific thread that we want to dump.
++        int32_t tid_state = tid;
++        if (tgkill(getpid(), tid, SIGURG)) {
++            ALOGV("Failed to send SIGURG to thread %d.", tid);
++        } else {
++            // Wait for the other thread to start dumping the stack, or time out.
++            int wait_millis = 250;
++            for (;;) {
++                tid_state = android_atomic_acquire_load(&g_unwind_signal_state.tid_state);
++                if (tid_state != tid) {
++                    break;
++                }
++                if (wait_millis--) {
++                    ALOGV("Waiting for thread %d to start dumping the stack...", tid);
++                    usleep(1000);
++                } else {
++                    ALOGV("Timed out waiting for thread %d to start dumping the stack.", tid);
++                    break;
++                }
++            }
++        }
++
++        // Try to cancel the dump if it has not started yet.
++        if (tid_state == tid) {
++            if (!android_atomic_acquire_cas(tid, STATE_CANCEL, &g_unwind_signal_state.tid_state)) {
++                ALOGV("Canceled thread %d stack dump.", tid);
++                tid_state = STATE_CANCEL;
++            } else {
++                tid_state = android_atomic_acquire_load(&g_unwind_signal_state.tid_state);
++            }
++        }
++
++        // Wait indefinitely for the dump to finish or be canceled.
++        // We cannot apply a timeout here because the other thread is accessing state that
++        // is owned by this thread, such as milist.  It should not take very
++        // long to take the dump once started.
++        while (tid_state == STATE_DUMPING) {
++            ALOGV("Waiting for thread %d to finish dumping the stack...", tid);
++            usleep(1000);
++            tid_state = android_atomic_acquire_load(&g_unwind_signal_state.tid_state);
++        }
++
++        if (tid_state == STATE_DONE) {
++            frames = g_unwind_signal_state.returned_frames;
++        }
++
++        sigaction(SIGURG, &oact, NULL);
++    }
++
++    release_my_map_info_list(milist);
++    pthread_mutex_unlock(&g_unwind_signal_mutex);
++    return frames;
++#else
++    return -1;
++#endif
++}
++
++ssize_t unwind_backtrace_ptrace(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth) {
++#ifdef CORKSCREW_HAVE_ARCH
++    return unwind_backtrace_ptrace_arch(tid, context, backtrace, ignore_depth, max_depth);
++#else
++    return -1;
++#endif
++}
++
++static void init_backtrace_symbol(backtrace_symbol_t* symbol, uintptr_t pc) {
++    symbol->relative_pc = pc;
++    symbol->relative_symbol_addr = 0;
++    symbol->map_name = NULL;
++    symbol->symbol_name = NULL;
++    symbol->demangled_name = NULL;
++}
++
++void get_backtrace_symbols(const backtrace_frame_t* backtrace, size_t frames,
++        backtrace_symbol_t* backtrace_symbols) {
++    map_info_t* milist = acquire_my_map_info_list();
++    for (size_t i = 0; i < frames; i++) {
++        const backtrace_frame_t* frame = &backtrace[i];
++        backtrace_symbol_t* symbol = &backtrace_symbols[i];
++        init_backtrace_symbol(symbol, frame->absolute_pc);
++
++        const map_info_t* mi = find_map_info(milist, frame->absolute_pc);
++        if (mi) {
++            symbol->relative_pc = frame->absolute_pc - mi->start;
++            if (mi->name[0]) {
++                symbol->map_name = strdup(mi->name);
++            }
++            Dl_info info;
++            if (dladdr((const void*)frame->absolute_pc, &info) && info.dli_sname) {
++                symbol->relative_symbol_addr = (uintptr_t)info.dli_saddr
++                        - (uintptr_t)info.dli_fbase;
++                symbol->symbol_name = strdup(info.dli_sname);
++                symbol->demangled_name = demangle_symbol_name(symbol->symbol_name);
++            }
++        }
++    }
++    release_my_map_info_list(milist);
++}
++
++void get_backtrace_symbols_ptrace(const ptrace_context_t* context,
++        const backtrace_frame_t* backtrace, size_t frames,
++        backtrace_symbol_t* backtrace_symbols) {
++    for (size_t i = 0; i < frames; i++) {
++        const backtrace_frame_t* frame = &backtrace[i];
++        backtrace_symbol_t* symbol = &backtrace_symbols[i];
++        init_backtrace_symbol(symbol, frame->absolute_pc);
++
++        const map_info_t* mi;
++        const symbol_t* s;
++        find_symbol_ptrace(context, frame->absolute_pc, &mi, &s);
++        if (mi) {
++            symbol->relative_pc = frame->absolute_pc - mi->start;
++            if (mi->name[0]) {
++                symbol->map_name = strdup(mi->name);
++            }
++        }
++        if (s) {
++            symbol->relative_symbol_addr = s->start;
++            symbol->symbol_name = strdup(s->name);
++            symbol->demangled_name = demangle_symbol_name(symbol->symbol_name);
++        }
++    }
++}
++
++void free_backtrace_symbols(backtrace_symbol_t* backtrace_symbols, size_t frames) {
++    for (size_t i = 0; i < frames; i++) {
++        backtrace_symbol_t* symbol = &backtrace_symbols[i];
++        free(symbol->map_name);
++        free(symbol->symbol_name);
++        free(symbol->demangled_name);
++        init_backtrace_symbol(symbol, 0);
++    }
++}
++
++void format_backtrace_line(unsigned frameNumber, const backtrace_frame_t* frame __attribute__((unused)),
++        const backtrace_symbol_t* symbol, char* buffer, size_t bufferSize) {
++    const char* mapName = symbol->map_name ? symbol->map_name : "<unknown>";
++    const char* symbolName = symbol->demangled_name ? symbol->demangled_name : symbol->symbol_name;
++    int fieldWidth = (bufferSize - 80) / 2;
++    if (symbolName) {
++        uint32_t pc_offset = symbol->relative_pc - symbol->relative_symbol_addr;
++        if (pc_offset) {
++            snprintf(buffer, bufferSize, "#%02u  pc %08x  %.*s (%.*s+%u)",
++                    frameNumber, (unsigned int) symbol->relative_pc,
++                    fieldWidth, mapName, fieldWidth, symbolName, pc_offset);
++        } else {
++            snprintf(buffer, bufferSize, "#%02u  pc %08x  %.*s (%.*s)",
++                    frameNumber, (unsigned int) symbol->relative_pc,
++                    fieldWidth, mapName, fieldWidth, symbolName);
++        }
++    } else {
++        snprintf(buffer, bufferSize, "#%02u  pc %08x  %.*s",
++                frameNumber, (unsigned int) symbol->relative_pc,
++                fieldWidth, mapName);
++    }
++}
+diff --git a/libcorkscrew/demangle.c b/libcorkscrew/demangle.c
+new file mode 100644
+index 00000000..30ab1b09
+--- /dev/null
++++ b/libcorkscrew/demangle.c
+@@ -0,0 +1,36 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include <corkscrew/demangle.h>
++
++#include <cutils/log.h>
++
++extern char *__cxa_demangle (const char *mangled, char *buf, size_t *len,
++                             int *status);
++
++char* demangle_symbol_name(const char* name) {
++#if defined(__APPLE__)
++    // Mac OS' __cxa_demangle demangles "f" as "float"; last tested on 10.7.
++    if (name != NULL && name[0] != '_') {
++        return NULL;
++    }
++#endif
++    // __cxa_demangle handles NULL by returning NULL
++    return __cxa_demangle(name, 0, 0, 0);
++}
+diff --git a/libcorkscrew/map_info.c b/libcorkscrew/map_info.c
+new file mode 100644
+index 00000000..93dffbf7
+--- /dev/null
++++ b/libcorkscrew/map_info.c
+@@ -0,0 +1,279 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include <corkscrew/map_info.h>
++
++#include <ctype.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <limits.h>
++#include <pthread.h>
++#include <unistd.h>
++#include <cutils/log.h>
++#include <sys/time.h>
++
++#if defined(__APPLE__)
++
++// Mac OS vmmap(1) output:
++// __TEXT                 0009f000-000a1000 [    8K     8K] r-x/rwx SM=COW  /Volumes/android/dalvik-dev/out/host/darwin-x86/bin/libcorkscrew_test\n
++// 012345678901234567890123456789012345678901234567890123456789
++// 0         1         2         3         4         5
++static map_info_t* parse_vmmap_line(const char* line) {
++    unsigned long int start;
++    unsigned long int end;
++    char permissions[4];
++    int name_pos;
++    if (sscanf(line, "%*21c %lx-%lx [%*13c] %3c/%*3c SM=%*3c  %n",
++               &start, &end, permissions, &name_pos) != 3) {
++        return NULL;
++    }
++
++    const char* name = line + name_pos;
++    size_t name_len = strlen(name);
++
++    map_info_t* mi = calloc(1, sizeof(map_info_t) + name_len);
++    if (mi != NULL) {
++        mi->start = start;
++        mi->end = end;
++        mi->is_readable = permissions[0] == 'r';
++        mi->is_writable = permissions[1] == 'w';
++        mi->is_executable = permissions[2] == 'x';
++        mi->data = NULL;
++        memcpy(mi->name, name, name_len);
++        mi->name[name_len - 1] = '\0';
++        ALOGV("Parsed map: start=0x%08x, end=0x%08x, "
++              "is_readable=%d, is_writable=%d is_executable=%d, name=%s",
++              mi->start, mi->end,
++              mi->is_readable, mi->is_writable, mi->is_executable, mi->name);
++    }
++    return mi;
++}
++
++map_info_t* load_map_info_list(pid_t pid) {
++    char cmd[1024];
++    snprintf(cmd, sizeof(cmd), "vmmap -w -resident -submap -allSplitLibs -interleaved %d", pid);
++    FILE* fp = popen(cmd, "r");
++    if (fp == NULL) {
++        return NULL;
++    }
++
++    char line[1024];
++    map_info_t* milist = NULL;
++    while (fgets(line, sizeof(line), fp) != NULL) {
++        map_info_t* mi = parse_vmmap_line(line);
++        if (mi != NULL) {
++            mi->next = milist;
++            milist = mi;
++        }
++    }
++    pclose(fp);
++    return milist;
++}
++
++#else
++
++// Linux /proc/<pid>/maps lines:
++// 6f000000-6f01e000 rwxp 00000000 00:0c 16389419   /system/lib/libcomposer.so\n
++// 012345678901234567890123456789012345678901234567890123456789
++// 0         1         2         3         4         5
++static map_info_t* parse_maps_line(const char* line)
++{
++    unsigned long int start;
++    unsigned long int end;
++    char permissions[5];
++    int name_pos;
++    if (sscanf(line, "%lx-%lx %4s %*x %*x:%*x %*d%n", &start, &end,
++            permissions, &name_pos) != 3) {
++        return NULL;
++    }
++
++    while (isspace(line[name_pos])) {
++        name_pos += 1;
++    }
++    const char* name = line + name_pos;
++    size_t name_len = strlen(name);
++    if (name_len && name[name_len - 1] == '\n') {
++        name_len -= 1;
++    }
++
++    map_info_t* mi = calloc(1, sizeof(map_info_t) + name_len + 1);
++    if (mi) {
++        mi->start = start;
++        mi->end = end;
++        mi->is_readable = strlen(permissions) == 4 && permissions[0] == 'r';
++        mi->is_writable = strlen(permissions) == 4 && permissions[1] == 'w';
++        mi->is_executable = strlen(permissions) == 4 && permissions[2] == 'x';
++        mi->data = NULL;
++        memcpy(mi->name, name, name_len);
++        mi->name[name_len] = '\0';
++        ALOGV("Parsed map: start=0x%08x, end=0x%08x, "
++              "is_readable=%d, is_writable=%d, is_executable=%d, name=%s",
++              mi->start, mi->end,
++              mi->is_readable, mi->is_writable, mi->is_executable, mi->name);
++    }
++    return mi;
++}
++
++map_info_t* load_map_info_list(pid_t tid) {
++    char path[PATH_MAX];
++    char line[1024];
++    FILE* fp;
++    map_info_t* milist = NULL;
++
++    snprintf(path, PATH_MAX, "/proc/%d/maps", tid);
++    fp = fopen(path, "r");
++    if (fp) {
++        while(fgets(line, sizeof(line), fp)) {
++            map_info_t* mi = parse_maps_line(line);
++            if (mi) {
++                mi->next = milist;
++                milist = mi;
++            }
++        }
++        fclose(fp);
++    }
++    return milist;
++}
++
++#endif
++
++void free_map_info_list(map_info_t* milist) {
++    while (milist) {
++        map_info_t* next = milist->next;
++        free(milist);
++        milist = next;
++    }
++}
++
++const map_info_t* find_map_info(const map_info_t* milist, uintptr_t addr) {
++    const map_info_t* mi = milist;
++    while (mi && !(addr >= mi->start && addr < mi->end)) {
++        mi = mi->next;
++    }
++    return mi;
++}
++
++bool is_readable_map(const map_info_t* milist, uintptr_t addr) {
++    const map_info_t* mi = find_map_info(milist, addr);
++    return mi && mi->is_readable;
++}
++
++bool is_writable_map(const map_info_t* milist, uintptr_t addr) {
++    const map_info_t* mi = find_map_info(milist, addr);
++    return mi && mi->is_writable;
++}
++
++bool is_executable_map(const map_info_t* milist, uintptr_t addr) {
++    const map_info_t* mi = find_map_info(milist, addr);
++    return mi && mi->is_executable;
++}
++
++static pthread_mutex_t g_my_map_info_list_mutex = PTHREAD_MUTEX_INITIALIZER;
++static map_info_t* g_my_map_info_list = NULL;
++
++static const int64_t MAX_CACHE_AGE = 5 * 1000 * 1000000LL;
++
++typedef struct {
++    uint32_t refs;
++    int64_t timestamp;
++} my_map_info_data_t;
++
++static int64_t now_ns() {
++#if defined(HAVE_POSIX_CLOCKS)
++    struct timespec t;
++    t.tv_sec = t.tv_nsec = 0;
++    clock_gettime(CLOCK_MONOTONIC, &t);
++    return t.tv_sec * 1000000000LL + t.tv_nsec;
++#else
++    struct timeval t;
++    gettimeofday(&t, NULL);
++    return t.tv_sec * 1000000000LL + t.tv_usec * 1000LL;
++#endif
++}
++
++static void dec_ref(map_info_t* milist, my_map_info_data_t* data) {
++    if (!--data->refs) {
++        ALOGV("Freed my_map_info_list %p.", milist);
++        free(data);
++        free_map_info_list(milist);
++    }
++}
++
++map_info_t* acquire_my_map_info_list() {
++    pthread_mutex_lock(&g_my_map_info_list_mutex);
++
++    int64_t time = now_ns();
++    if (g_my_map_info_list != NULL) {
++        my_map_info_data_t* data = (my_map_info_data_t*)g_my_map_info_list->data;
++        int64_t age = time - data->timestamp;
++        if (age >= MAX_CACHE_AGE) {
++            ALOGV("Invalidated my_map_info_list %p, age=%lld.", g_my_map_info_list, age);
++            dec_ref(g_my_map_info_list, data);
++            g_my_map_info_list = NULL;
++        } else {
++            ALOGV("Reusing my_map_info_list %p, age=%lld.", g_my_map_info_list, age);
++        }
++    }
++
++    if (g_my_map_info_list == NULL) {
++        my_map_info_data_t* data = (my_map_info_data_t*)malloc(sizeof(my_map_info_data_t));
++        g_my_map_info_list = load_map_info_list(getpid());
++        if (g_my_map_info_list != NULL) {
++            ALOGV("Loaded my_map_info_list %p.", g_my_map_info_list);
++            g_my_map_info_list->data = data;
++            data->refs = 1;
++            data->timestamp = time;
++        } else {
++            free(data);
++        }
++    }
++
++    map_info_t* milist = g_my_map_info_list;
++    if (milist) {
++        my_map_info_data_t* data = (my_map_info_data_t*)g_my_map_info_list->data;
++        data->refs += 1;
++    }
++
++    pthread_mutex_unlock(&g_my_map_info_list_mutex);
++    return milist;
++}
++
++void release_my_map_info_list(map_info_t* milist) {
++    if (milist) {
++        pthread_mutex_lock(&g_my_map_info_list_mutex);
++
++        my_map_info_data_t* data = (my_map_info_data_t*)milist->data;
++        dec_ref(milist, data);
++
++        pthread_mutex_unlock(&g_my_map_info_list_mutex);
++    }
++}
++
++void flush_my_map_info_list() {
++    pthread_mutex_lock(&g_my_map_info_list_mutex);
++
++    if (g_my_map_info_list != NULL) {
++        my_map_info_data_t* data = (my_map_info_data_t*) g_my_map_info_list->data;
++        dec_ref(g_my_map_info_list, data);
++        g_my_map_info_list = NULL;
++    }
++
++    pthread_mutex_unlock(&g_my_map_info_list_mutex);
++}
+diff --git a/libcorkscrew/ptrace-arch.h b/libcorkscrew/ptrace-arch.h
+new file mode 100755
+index 00000000..0bcff63d
+--- /dev/null
++++ b/libcorkscrew/ptrace-arch.h
+@@ -0,0 +1,51 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* Architecture dependent functions. */
++
++#ifndef _CORKSCREW_PTRACE_ARCH_H
++#define _CORKSCREW_PTRACE_ARCH_H
++
++#include <corkscrew/ptrace.h>
++#include <corkscrew/map_info.h>
++#include <corkscrew/symbol_table.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Custom extra data we stuff into map_info_t structures as part
++ * of our ptrace_context_t. */
++typedef struct {
++#ifdef __arm__
++    uintptr_t exidx_start;
++    size_t exidx_size;
++#elif __mips__
++    uintptr_t eh_frame_hdr;
++#elif __i386__
++    uintptr_t eh_frame_hdr;
++#endif
++    symbol_table_t* symbol_table;
++} map_info_data_t;
++
++void load_ptrace_map_info_data_arch(pid_t pid, map_info_t* mi, map_info_data_t* data);
++void free_ptrace_map_info_data_arch(map_info_t* mi, map_info_data_t* data);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_PTRACE_ARCH_H
+diff --git a/libcorkscrew/ptrace.c b/libcorkscrew/ptrace.c
+new file mode 100644
+index 00000000..be58f7f9
+--- /dev/null
++++ b/libcorkscrew/ptrace.c
+@@ -0,0 +1,152 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include "ptrace-arch.h"
++#include <corkscrew/ptrace.h>
++
++#include <errno.h>
++#include <stdlib.h>
++#include <sys/ptrace.h>
++#include <cutils/log.h>
++
++static const uint32_t ELF_MAGIC = 0x464C457f; // "ELF\0177"
++
++#ifndef PAGE_SIZE
++#define PAGE_SIZE 4096
++#endif
++
++#ifndef PAGE_MASK
++#define PAGE_MASK (~(PAGE_SIZE - 1))
++#endif
++
++void init_memory(memory_t* memory, const map_info_t* map_info_list) {
++    memory->tid = -1;
++    memory->map_info_list = map_info_list;
++}
++
++void init_memory_ptrace(memory_t* memory, pid_t tid) {
++    memory->tid = tid;
++    memory->map_info_list = NULL;
++}
++
++bool try_get_word(const memory_t* memory, uintptr_t ptr, uint32_t* out_value) {
++    ALOGV("try_get_word: reading word at %p", (void*) ptr);
++    if (ptr & 3) {
++        ALOGV("try_get_word: invalid pointer %p", (void*) ptr);
++        *out_value = 0xffffffffL;
++        return false;
++    }
++    if (memory->tid < 0) {
++        if (!is_readable_map(memory->map_info_list, ptr)) {
++            ALOGV("try_get_word: pointer %p not in a readable map", (void*) ptr);
++            *out_value = 0xffffffffL;
++            return false;
++        }
++        *out_value = *(uint32_t*)ptr;
++        return true;
++    } else {
++#if defined(__APPLE__)
++        ALOGV("no ptrace on Mac OS");
++        return false;
++#else
++        // ptrace() returns -1 and sets errno when the operation fails.
++        // To disambiguate -1 from a valid result, we clear errno beforehand.
++        errno = 0;
++        *out_value = ptrace(PTRACE_PEEKTEXT, memory->tid, (void*)ptr, NULL);
++        if (*out_value == 0xffffffffL && errno) {
++            ALOGV("try_get_word: invalid pointer 0x%08x reading from tid %d, "
++                    "ptrace() errno=%d", ptr, memory->tid, errno);
++            return false;
++        }
++        return true;
++#endif
++    }
++}
++
++bool try_get_word_ptrace(pid_t tid, uintptr_t ptr, uint32_t* out_value) {
++    memory_t memory;
++    init_memory_ptrace(&memory, tid);
++    return try_get_word(&memory, ptr, out_value);
++}
++
++static void load_ptrace_map_info_data(pid_t pid, map_info_t* mi) {
++    if (mi->is_executable && mi->is_readable) {
++        uint32_t elf_magic;
++        if (try_get_word_ptrace(pid, mi->start, &elf_magic) && elf_magic == ELF_MAGIC) {
++            map_info_data_t* data = (map_info_data_t*)calloc(1, sizeof(map_info_data_t));
++            if (data) {
++                mi->data = data;
++                if (mi->name[0]) {
++                    data->symbol_table = load_symbol_table(mi->name);
++                }
++#ifdef CORKSCREW_HAVE_ARCH
++                load_ptrace_map_info_data_arch(pid, mi, data);
++#endif
++            }
++        }
++    }
++}
++
++ptrace_context_t* load_ptrace_context(pid_t pid) {
++    ptrace_context_t* context =
++            (ptrace_context_t*)calloc(1, sizeof(ptrace_context_t));
++    if (context) {
++        context->map_info_list = load_map_info_list(pid);
++        for (map_info_t* mi = context->map_info_list; mi; mi = mi->next) {
++            load_ptrace_map_info_data(pid, mi);
++        }
++    }
++    return context;
++}
++
++static void free_ptrace_map_info_data(map_info_t* mi) {
++    map_info_data_t* data = (map_info_data_t*)mi->data;
++    if (data) {
++        if (data->symbol_table) {
++            free_symbol_table(data->symbol_table);
++        }
++#ifdef CORKSCREW_HAVE_ARCH
++        free_ptrace_map_info_data_arch(mi, data);
++#endif
++        free(data);
++        mi->data = NULL;
++    }
++}
++
++void free_ptrace_context(ptrace_context_t* context) {
++    for (map_info_t* mi = context->map_info_list; mi; mi = mi->next) {
++        free_ptrace_map_info_data(mi);
++    }
++    free_map_info_list(context->map_info_list);
++    free(context);
++}
++
++void find_symbol_ptrace(const ptrace_context_t* context,
++        uintptr_t addr, const map_info_t** out_map_info, const symbol_t** out_symbol) {
++    const map_info_t* mi = find_map_info(context->map_info_list, addr);
++    const symbol_t* symbol = NULL;
++    if (mi) {
++        const map_info_data_t* data = (const map_info_data_t*)mi->data;
++        if (data && data->symbol_table) {
++            symbol = find_symbol(data->symbol_table, addr - mi->start);
++        }
++    }
++    *out_map_info = mi;
++    *out_symbol = symbol;
++}
+diff --git a/libcorkscrew/symbol_table.c b/libcorkscrew/symbol_table.c
+new file mode 100644
+index 00000000..982ccc8e
+--- /dev/null
++++ b/libcorkscrew/symbol_table.c
+@@ -0,0 +1,227 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "Corkscrew"
++//#define LOG_NDEBUG 0
++
++#include <corkscrew/symbol_table.h>
++
++#include <stdbool.h>
++#include <stdlib.h>
++#include <fcntl.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/mman.h>
++#include <cutils/log.h>
++
++#if defined(__APPLE__)
++#else
++
++#include <elf.h>
++
++static bool is_elf(Elf32_Ehdr* e) {
++    return (e->e_ident[EI_MAG0] == ELFMAG0 &&
++            e->e_ident[EI_MAG1] == ELFMAG1 &&
++            e->e_ident[EI_MAG2] == ELFMAG2 &&
++            e->e_ident[EI_MAG3] == ELFMAG3);
++}
++
++#endif
++
++// Compare function for qsort
++static int qcompar(const void *a, const void *b) {
++    const symbol_t* asym = (const symbol_t*)a;
++    const symbol_t* bsym = (const symbol_t*)b;
++    if (asym->start > bsym->start) return 1;
++    if (asym->start < bsym->start) return -1;
++    return 0;
++}
++
++// Compare function for bsearch
++static int bcompar(const void *key, const void *element) {
++    uintptr_t addr = *(const uintptr_t*)key;
++    const symbol_t* symbol = (const symbol_t*)element;
++    if (addr < symbol->start) return -1;
++    if (addr >= symbol->end) return 1;
++    return 0;
++}
++
++symbol_table_t* load_symbol_table(const char *filename) {
++    symbol_table_t* table = NULL;
++#if !defined(__APPLE__)
++    ALOGV("Loading symbol table from '%s'.", filename);
++
++    int fd = open(filename, O_RDONLY);
++    if (fd < 0) {
++        goto out;
++    }
++
++    struct stat sb;
++    if (fstat(fd, &sb)) {
++        goto out_close;
++    }
++
++    size_t length = sb.st_size;
++    char* base = mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, 0);
++    if (base == MAP_FAILED) {
++        goto out_close;
++    }
++
++    // Parse the file header
++    Elf32_Ehdr *hdr = (Elf32_Ehdr*)base;
++    if (!is_elf(hdr)) {
++        goto out_close;
++    }
++    Elf32_Shdr *shdr = (Elf32_Shdr*)(base + hdr->e_shoff);
++
++    // Search for the dynamic symbols section
++    int sym_idx = -1;
++    int dynsym_idx = -1;
++    for (Elf32_Half i = 0; i < hdr->e_shnum; i++) {
++        if (shdr[i].sh_type == SHT_SYMTAB) {
++            sym_idx = i;
++        }
++        if (shdr[i].sh_type == SHT_DYNSYM) {
++            dynsym_idx = i;
++        }
++    }
++    if (dynsym_idx == -1 && sym_idx == -1) {
++        goto out_unmap;
++    }
++
++    table = malloc(sizeof(symbol_table_t));
++    if(!table) {
++        goto out_unmap;
++    }
++    table->num_symbols = 0;
++
++    Elf32_Sym *dynsyms = NULL;
++    int dynnumsyms = 0;
++    char *dynstr = NULL;
++    if (dynsym_idx != -1) {
++        dynsyms = (Elf32_Sym*)(base + shdr[dynsym_idx].sh_offset);
++        dynnumsyms = shdr[dynsym_idx].sh_size / shdr[dynsym_idx].sh_entsize;
++        int dynstr_idx = shdr[dynsym_idx].sh_link;
++        dynstr = base + shdr[dynstr_idx].sh_offset;
++    }
++
++    Elf32_Sym *syms = NULL;
++    int numsyms = 0;
++    char *str = NULL;
++    if (sym_idx != -1) {
++        syms = (Elf32_Sym*)(base + shdr[sym_idx].sh_offset);
++        numsyms = shdr[sym_idx].sh_size / shdr[sym_idx].sh_entsize;
++        int str_idx = shdr[sym_idx].sh_link;
++        str = base + shdr[str_idx].sh_offset;
++    }
++
++    int dynsymbol_count = 0;
++    if (dynsym_idx != -1) {
++        // Iterate through the dynamic symbol table, and count how many symbols
++        // are actually defined
++        for (int i = 0; i < dynnumsyms; i++) {
++            if (dynsyms[i].st_shndx != SHN_UNDEF) {
++                dynsymbol_count++;
++            }
++        }
++    }
++
++    size_t symbol_count = 0;
++    if (sym_idx != -1) {
++        // Iterate through the symbol table, and count how many symbols
++        // are actually defined
++        for (int i = 0; i < numsyms; i++) {
++            if (syms[i].st_shndx != SHN_UNDEF
++                    && str[syms[i].st_name]
++                    && syms[i].st_value
++                    && syms[i].st_size) {
++                symbol_count++;
++            }
++        }
++    }
++
++    // Now, create an entry in our symbol table structure for each symbol...
++    table->num_symbols += symbol_count + dynsymbol_count;
++    table->symbols = malloc(table->num_symbols * sizeof(symbol_t));
++    if (!table->symbols) {
++        free(table);
++        table = NULL;
++        goto out_unmap;
++    }
++
++    size_t symbol_index = 0;
++    if (dynsym_idx != -1) {
++        // ...and populate them
++        for (int i = 0; i < dynnumsyms; i++) {
++            if (dynsyms[i].st_shndx != SHN_UNDEF) {
++                table->symbols[symbol_index].name = strdup(dynstr + dynsyms[i].st_name);
++                table->symbols[symbol_index].start = dynsyms[i].st_value;
++                table->symbols[symbol_index].end = dynsyms[i].st_value + dynsyms[i].st_size;
++                ALOGV("  [%d] '%s' 0x%08x-0x%08x (DYNAMIC)",
++                        symbol_index, table->symbols[symbol_index].name,
++                        table->symbols[symbol_index].start, table->symbols[symbol_index].end);
++                symbol_index += 1;
++            }
++        }
++    }
++
++    if (sym_idx != -1) {
++        // ...and populate them
++        for (int i = 0; i < numsyms; i++) {
++            if (syms[i].st_shndx != SHN_UNDEF
++                    && str[syms[i].st_name]
++                    && syms[i].st_value
++                    && syms[i].st_size) {
++                table->symbols[symbol_index].name = strdup(str + syms[i].st_name);
++                table->symbols[symbol_index].start = syms[i].st_value;
++                table->symbols[symbol_index].end = syms[i].st_value + syms[i].st_size;
++                ALOGV("  [%d] '%s' 0x%08x-0x%08x",
++                        symbol_index, table->symbols[symbol_index].name,
++                        table->symbols[symbol_index].start, table->symbols[symbol_index].end);
++                symbol_index += 1;
++            }
++        }
++    }
++
++    // Sort the symbol table entries, so they can be bsearched later
++    qsort(table->symbols, table->num_symbols, sizeof(symbol_t), qcompar);
++
++out_unmap:
++    munmap(base, length);
++
++out_close:
++    close(fd);
++#endif
++
++out:
++    return table;
++}
++
++void free_symbol_table(symbol_table_t* table) {
++    if (table) {
++        for (size_t i = 0; i < table->num_symbols; i++) {
++            free(table->symbols[i].name);
++        }
++        free(table->symbols);
++        free(table);
++    }
++}
++
++const symbol_t* find_symbol(const symbol_table_t* table, uintptr_t addr) {
++    if (!table) return NULL;
++    return (const symbol_t*)bsearch(&addr, table->symbols, table->num_symbols,
++            sizeof(symbol_t), bcompar);
++}
+diff --git a/libcorkscrew/test.cpp b/libcorkscrew/test.cpp
+new file mode 100644
+index 00000000..22dfa7d4
+--- /dev/null
++++ b/libcorkscrew/test.cpp
+@@ -0,0 +1,76 @@
++#include <corkscrew/backtrace.h>
++#include <corkscrew/symbol_table.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++int do_backtrace(float /* just to test demangling */) {
++  const size_t MAX_DEPTH = 32;
++  backtrace_frame_t* frames = (backtrace_frame_t*) malloc(sizeof(backtrace_frame_t) * MAX_DEPTH);
++  ssize_t frame_count = unwind_backtrace(frames, 0, MAX_DEPTH);
++  fprintf(stderr, "frame_count=%d\n", (int) frame_count);
++  if (frame_count <= 0) {
++    return frame_count;
++  }
++
++  backtrace_symbol_t* backtrace_symbols = (backtrace_symbol_t*) malloc(sizeof(backtrace_symbol_t) * frame_count);
++  get_backtrace_symbols(frames, frame_count, backtrace_symbols);
++
++  for (size_t i = 0; i < (size_t) frame_count; ++i) {
++    char line[MAX_BACKTRACE_LINE_LENGTH];
++    format_backtrace_line(i, &frames[i], &backtrace_symbols[i],
++                          line, MAX_BACKTRACE_LINE_LENGTH);
++    if (backtrace_symbols[i].symbol_name != NULL) {
++      // get_backtrace_symbols found the symbol's name with dladdr(3).
++      fprintf(stderr, "  %s\n", line);
++    } else {
++      // We don't have a symbol. Maybe this is a static symbol, and
++      // we can look it up?
++      symbol_table_t* symbols = NULL;
++      if (backtrace_symbols[i].map_name != NULL) {
++        symbols = load_symbol_table(backtrace_symbols[i].map_name);
++      }
++      const symbol_t* symbol = NULL;
++      if (symbols != NULL) {
++        symbol = find_symbol(symbols, frames[i].absolute_pc);
++      }
++      if (symbol != NULL) {
++        int offset = frames[i].absolute_pc - symbol->start;
++        fprintf(stderr, "  %s (%s%+d)\n", line, symbol->name, offset);
++      } else {
++        fprintf(stderr, "  %s (\?\?\?)\n", line);
++      }
++      free_symbol_table(symbols);
++    }
++  }
++
++  free_backtrace_symbols(backtrace_symbols, frame_count);
++  free(backtrace_symbols);
++  free(frames);
++  return frame_count;
++}
++
++struct C {
++  int g(int i);
++};
++
++__attribute__ ((noinline)) int C::g(int i) {
++  if (i == 0) {
++    return do_backtrace(0.1);
++  }
++  return g(i - 1);
++}
++
++extern "C" __attribute__ ((noinline)) int f() {
++  C c;
++  return c.g(5);
++}
++
++int main() {
++  flush_my_map_info_list();
++  f();
++
++  flush_my_map_info_list();
++  f();
++
++  return 0;
++}
+-- 
+2.15.1
+

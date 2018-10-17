@@ -1,0 +1,148 @@
+From 7b494f46a58dd4a97d36e38cd31adddc66fa3e1a Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Sat, 17 Mar 2018 17:23:22 +0100
+Subject: [PATCH 3/9] Fix Omx for mtk
+
+---
+ include/media/openmax/OMX_Core.h     | 21 ++++-----------------
+ include/media/openmax/OMX_IVCommon.h |  8 ++++----
+ include/media/openmax/OMX_Index.h    | 23 ++++-------------------
+ include/media/openmax/OMX_IndexExt.h |  2 +-
+ 4 files changed, 13 insertions(+), 41 deletions(-)
+
+diff --git a/include/media/openmax/OMX_Core.h b/include/media/openmax/OMX_Core.h
+index a289d1e8d..7dc5e5b4a 100644
+--- a/include/media/openmax/OMX_Core.h
++++ b/include/media/openmax/OMX_Core.h
+@@ -413,17 +413,12 @@ typedef struct OMX_PARAM_COMPONENTROLETYPE {
+ // <--- Morris Yang 20110322 add for RV resizing
+ #define OMX_BUFFERFLAG_SPECIFYRESOLUTION 0x00000100
+ 
++// for 3D stereo
++#define OMX_BUFFERFLAG_3D_SIDEBYSIDE   0x00000200
++#define OMX_BUFFERFLAG_3D_TOPANDBOTTOM 0x00000400
++//
+ // for invalid pts file
+ #define OMX_BUFFERFLAG_INVALID_TIMESTAMP 0x00000800
+-
+-// for Secure video playback
+-#define OMX_BUFFERFLAG_SECUREBUF   0x00002000
+-
+-// Bruce Hsu for dummy NALU
+-#define OMX_BUFFERFLAG_DUMMY_NALU   0x00004000
+-
+-// for ACodec color convert
+-#define OMX_ACODEC_COLOR_CONVERT 0x01000000
+ #endif
+ 
+ /** @ingroup buf */
+@@ -513,14 +508,6 @@ typedef struct OMX_PORT_PARAM_TYPE {
+     OMX_U32 nStartPortNumber;   /** first port number for this type of port */
+ } OMX_PORT_PARAM_TYPE;
+ 
+-#ifdef MTK_HARDWARE
+-/** @ingroup comp */
+-typedef struct OMX_MTK_PLATFORM_PRIVATE {
+-    OMX_U32 mM4UMVABufferPa;
+-    OMX_U32 mM4UVABufferVa;
+-    //add next private members
+-} OMX_MTK_PLATFORM_PRIVATE;
+-#endif
+ 
+ /** @ingroup comp */
+ typedef enum OMX_EVENTTYPE
+diff --git a/include/media/openmax/OMX_IVCommon.h b/include/media/openmax/OMX_IVCommon.h
+index 80dfd7e43..fc8ccffb2 100644
+--- a/include/media/openmax/OMX_IVCommon.h
++++ b/include/media/openmax/OMX_IVCommon.h
+@@ -149,6 +149,10 @@ typedef enum OMX_COLOR_FORMATTYPE {
+     OMX_COLOR_Format24BitABGR6666,
+     OMX_COLOR_FormatKhronosExtensions = 0x6F000000, /**< Reserved region for introducing Khronos Standard Extensions */
+     OMX_COLOR_FormatVendorStartUnused = 0x7F000000, /**< Reserved region for introducing Vendor Extensions */
++#ifdef MTK_HARDWARE
++    OMX_COLOR_FormatVendorMTKYUV = 0x7F000001,
++    OMX_COLOR_FormatVendorMTKYUV_FCM = 0x7F000002,
++#endif
+     /**<Reserved android opaque colorformat. Tells the encoder that
+      * the actual colorformat will be  relayed by the
+      * Gralloc Buffers.
+@@ -163,13 +167,9 @@ typedef enum OMX_COLOR_FORMATTYPE {
+      *  codec can substitute any YUV420 packed planar or semiplanar
+      *  format for it. */
+     OMX_COLOR_FormatYUV420Flexible = 0x7F420888,
+-
+ #ifdef MTK_HARDWARE
+-    OMX_COLOR_FormatVendorMTKYUV = 0x7F000001,
+-    OMX_COLOR_FormatVendorMTKYUV_FCM = 0x7F000002,
+     OMX_MTK_COLOR_FormatYV12 = 0x7F000200,
+ #endif
+-
+     OMX_TI_COLOR_FormatYUV420PackedSemiPlanar = 0x7F000100,
+     OMX_QCOM_COLOR_FormatYVU420SemiPlanar = 0x7FA30C00,
+     OMX_QCOM_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka = 0x7FA30C03,
+diff --git a/include/media/openmax/OMX_Index.h b/include/media/openmax/OMX_Index.h
+index 9937cd373..4cb82fd2e 100644
+--- a/include/media/openmax/OMX_Index.h
++++ b/include/media/openmax/OMX_Index.h
+@@ -195,9 +195,6 @@ typedef enum OMX_INDEXTYPE {
+     OMX_IndexParamVideoSliceFMO,            /**< reference: OMX_VIDEO_PARAM_AVCSLICEFMO */
+     OMX_IndexConfigVideoAVCIntraPeriod,     /**< reference: OMX_VIDEO_CONFIG_AVCINTRAPERIOD */
+     OMX_IndexConfigVideoNalSize,            /**< reference: OMX_VIDEO_CONFIG_NALSIZE */
+-#ifdef MTK_VIDEO_HEVC_SUPPORT
+-    OMX_IndexParamVideoHevc,                /**< reference: OMX_VIDEO_PARAM_HEVCTYPE */
+-#endif
+ 
+     /* Image & Video common Configurations */
+     OMX_IndexCommonStartUnused = 0x07000000,
+@@ -274,7 +271,6 @@ typedef enum OMX_INDEXTYPE {
+     OMX_GoogleAndroidIndexUseAndroidNativeBuffer,
+     OMX_GoogleAndroidIndexGetAndroidNativeBufferUsage,
+     OMX_GoogleAndroidIndexStoreMetaDataInBuffers,   // for live effect recording
+-    OMX_GoogleAndroidIndexPrepareForAdaptivePlayback,
+     OMX_IndexVendorMtkOmxPartialFrameQuerySupported,
+ 
+ 	OMX_IndexVendorMtkOmxVdecThumbnailMode,
+@@ -288,23 +284,12 @@ typedef enum OMX_INDEXTYPE {
+     OMX_IndexVendorMtkOmxVdecConcealmentLevel,
+     OMX_IndexVendorMtkOmxVdecStreamingMode,
+ 
++    OMX_IndexVendorMtkMP3Decode,
++    OMX_IndexVendorMtkOmxVdec3DVideoPlayback,
++    OMX_IndexVendorMtkOmxVenc3DVideoRecode,
+     OMX_IndexVendorMtkOmxVdecGetAspectRatio,
+-    OMX_IndexVendorMtkOmxVdecGetCropInfo, 
+-    OMX_IndexVendorMtkOmxVideoUseIonBuffer,
++    OMX_IndexVendorMtkOmxVencUseIonBuffer,    // Morris Yang 20121203 for Venc ION path
+     OMX_IndexVendorMtkOmxVencSetIInterval,
+-    OMX_IndexVendorMtkOmxVencSkipFrame,
+-    OMX_IndexVendorMtkOmxVdecFixedMaxBuffer,
+-    OMX_IndexVendorMtkOmxVencDrawBlack,     //for Miracast test case SIGMA 5.1.11 workaround
+-    OMX_IndexVendorMtkOmxVdecNoReorderMode,
+-    OMX_IndexVendorMtkOmxVideoSetClientLocally,
+-    OMX_IndexVendorMtkOmxVdecSkipReferenceCheckMode, // Cheng-Jung 20131010 Skip reference check
+-    OMX_IndexVendorMtkOmxVencSetScenario,   //for Live photo (set venc scenario)
+-
+-    //Gary Wu add for ACodec color convert to get MVA addrs
+-    //OMX_IndexVendorMtkOmxVdecACodecColorConvertGetMVAAddr = 0x7F0FF001,
+-    OMX_IndexVendorMtkOmxVdecACodecColorConvertMode = 0x7F0FF002,
+-    //add for MediaCodec encode with input data format is RGB
+-    OMX_IndexVendorMtkOmxVdecACodecEncodeRGB2YUVMode = 0x7F0FF101,
+ #endif
+     OMX_IndexMax = 0x7FFFFFFF
+ 
+diff --git a/include/media/openmax/OMX_IndexExt.h b/include/media/openmax/OMX_IndexExt.h
+index 7790db040..45eabf71d 100644
+--- a/include/media/openmax/OMX_IndexExt.h
++++ b/include/media/openmax/OMX_IndexExt.h
+@@ -75,7 +75,7 @@ typedef enum OMX_INDEXEXTTYPE {
+     OMX_IndexConfigVideoVp8ReferenceFrame,          /**< reference: OMX_VIDEO_VP8REFERENCEFRAMETYPE */
+     OMX_IndexConfigVideoVp8ReferenceFrameType,      /**< reference: OMX_VIDEO_VP8REFERENCEFRAMEINFOTYPE */
+     OMX_IndexParamVideoAndroidVp8Encoder,           /**< reference: OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE */
+- //   OMX_IndexParamVideoHevc,                        /**< reference: OMX_VIDEO_PARAM_HEVCTYPE */
++    OMX_IndexParamVideoHevc,                        /**< reference: OMX_VIDEO_PARAM_HEVCTYPE */
+     OMX_IndexParamSliceSegments,                    /**< reference: OMX_VIDEO_SLICESEGMENTSTYPE */
+ 
+     /* Image & Video common configurations */
+-- 
+2.15.1
+

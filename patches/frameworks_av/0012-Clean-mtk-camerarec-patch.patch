@@ -1,0 +1,768 @@
+From 32c34fdfddd12079fc85c00a976691d4085cab3a Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:56:40 +0200
+Subject: [PATCH 12/18] Clean mtk camerarec patch
+
+---
+ include/media/stagefright/OMXCodec.h   |   6 +-
+ media/libmediaplayerservice/Android.mk |   2 +-
+ media/libstagefright/ACodec.cpp        | 405 +--------------------------------
+ media/libstagefright/Android.mk        |   5 -
+ media/libstagefright/MediaCodec.cpp    |   6 -
+ media/libstagefright/MediaDefs.cpp     |   3 -
+ media/libstagefright/omx/OMX.cpp       |   5 -
+ 7 files changed, 13 insertions(+), 419 deletions(-)
+
+diff --git a/include/media/stagefright/OMXCodec.h b/include/media/stagefright/OMXCodec.h
+index 9e4077231..4f8e99944 100644
+--- a/include/media/stagefright/OMXCodec.h
++++ b/include/media/stagefright/OMXCodec.h
+@@ -436,12 +436,12 @@ private:
+ 
+     status_t freeBuffer(OMX_U32 portIndex, size_t bufIndex);
+ 
+-#ifdef MTK_HARDWARE
++#ifndef MTK_HARDWARE
+     void PutErrorPatterns(uint8_t *pBuffer, uint32_t length);
+ #endif
+     bool drainInputBuffer(IOMX::buffer_id buffer);
+     void fillOutputBuffer(IOMX::buffer_id buffer);
+-#ifdef MTK_HARDWARE
++#ifndef MTK_HARDWARE
+     bool drainInputBuffer(BufferInfo *info, bool init = false);
+ #else
+     bool drainInputBuffer(BufferInfo *info);
+@@ -451,7 +451,7 @@ private:
+     void drainInputBuffers();
+     void fillOutputBuffers();
+ 
+-#ifdef MTK_HARDWARE
++#ifndef MTK_HARDWARE
+     bool drainAnyInputBuffer(bool init = false);
+ #else
+     bool drainAnyInputBuffer();
+diff --git a/media/libmediaplayerservice/Android.mk b/media/libmediaplayerservice/Android.mk
+index c96f18e5d..783b7014c 100644
+--- a/media/libmediaplayerservice/Android.mk
++++ b/media/libmediaplayerservice/Android.mk
+@@ -56,7 +56,7 @@ LOCAL_C_INCLUDES :=                                                 \
+     $(TOP)/frameworks/native/include/media/openmax                  \
+     $(TOP)/external/tremolo/Tremolo                                 \
+ 
+-ifeq ($(BOARD_HAS_MTK_HARDWARE),true)
++ifeq ($(strip $(BOARD_HAS_MTK_HARDWARE)),true)
+     LOCAL_C_INCLUDES += \
+      $(TOP)/mediatek/kernel/include/linux/vcodec \
+      $(TOP)/mediatek/frameworks-ext/av/media/libstagefright/include    \
+diff --git a/media/libstagefright/ACodec.cpp b/media/libstagefright/ACodec.cpp
+index fcf2218d7..6ff702fec 100644
+--- a/media/libstagefright/ACodec.cpp
++++ b/media/libstagefright/ACodec.cpp
+@@ -660,26 +660,20 @@ status_t ACodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+                 mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+ 
+         if (err == OK) {
+-#if defined(MTK_HARDWARE) && defined(ENABLE_MTK_BUF_ADDR_ALIGNMENT)
+-            def.nBufferSize = ((def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE-1) & ~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-#endif
+             ALOGV("[%s] Allocating %u buffers of size %u on %s port",
+                     mComponentName.c_str(),
+                     def.nBufferCountActual, def.nBufferSize,
+                     portIndex == kPortIndexInput ? "input" : "output");
+ 
+             size_t totalSize = def.nBufferCountActual * def.nBufferSize;
+-#if defined(MTK_HARDWARE) && defined(ENABLE_MTK_BUF_ADDR_ALIGNMENT)
+-            totalSize = def.nBufferCountActual * (((def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE-1) & ~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1)) + MTK_BUF_ADDR_ALIGNMENT_VALUE);
+-#endif
+             mDealer[portIndex] = new MemoryDealer(totalSize, "ACodec");
+ 
+             for (OMX_U32 i = 0; i < def.nBufferCountActual; ++i) {
+-                sp<IMemory> mem = NULL;
+-                mem = mDealer[portIndex]->allocate(def.nBufferSize);
++                sp<IMemory> mem = mDealer[portIndex]->allocate(def.nBufferSize);
+                 if (mem == NULL || mem->pointer() == NULL) {
+                     return NO_MEMORY;
+                 }
++
+                 BufferInfo info;
+                 info.mStatus = BufferInfo::OWNED_BY_US;
+ 
+@@ -709,14 +703,7 @@ status_t ACodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+                 }
+ 
+                 if (mem != NULL) {
+-#if defined(MTK_HARDWARE) && defined(ENABLE_MTK_BUF_ADDR_ALIGNMENT)
+-                    OMX_U8 *ptr = static_cast<OMX_U8 *>(mem->pointer());
+-                    OMX_U32 pBuffer = ((reinterpret_cast<OMX_U32>(ptr)+(MTK_BUF_ADDR_ALIGNMENT_VALUE-1))&~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-                    info.mData = new ABuffer((void*)pBuffer, def.nBufferSize);
+-                    ALOGD("@debug: Buffer[%d], %p(%p)", i, info.mData->data(), ptr);
+-#else
+                     info.mData = new ABuffer(mem->pointer(), def.nBufferSize);
+-#endif
+                 }
+ 
+                 mBuffers[portIndex].push(info);
+@@ -897,14 +884,6 @@ status_t ACodec::configureOutputBuffersFromNativeWindow(
+         return err;
+     }
+ 
+-#if defined(QCOM_HARDWARE) || defined(MTK_HARDWARE)
+-    //add an extra buffer to display queue to get around dequeue+wait
+-    //blocking too long (more than 1 Vsync) in case BufferQeuue is in
+-    //sync-mode and advertizes only 1 buffer
+-    (*minUndequeuedBuffers)++;
+-    ALOGI("NOTE: Overriding minUndequeuedBuffers to %lu",*minUndequeuedBuffers);
+-#endif
+-
+     // FIXME: assume that surface is controlled by app (native window
+     // returns the number for the case when surface is not controlled by app)
+     // FIXME2: This means that minUndeqeueudBufs can be 1 larger than reported
+@@ -1219,14 +1198,7 @@ ACodec::BufferInfo *ACodec::dequeueBufferFromNativeWindow() {
+         return oldest;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    ALOGI("dequeue buffer from native window (%p), but not matched in %d output buffers",
+-           mNativeWindow.get(), mBuffers[kPortIndexOutput].size(), mNativeWindow.get());
+-    int err = mNativeWindow->cancelBuffer(mNativeWindow.get(), buf, -1); 
+-    ALOGI("\t\tcancel this unexpected buffer from native window, err = %d", err);
+-#else
+     TRESPASS();
+-#endif
+ 
+     return NULL;
+ }
+@@ -1236,15 +1208,8 @@ status_t ACodec::freeBuffersOnPort(OMX_U32 portIndex) {
+         CHECK_EQ((status_t)OK, freeBuffer(portIndex, i));
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    if((portIndex == kPortIndexInput) && (!strncmp("OMX.MTK.VIDEO.DECODER.", mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mIsDemandNormalYUV==true))
+-    {
+-
+-    mDealer[portIndex].clear();
+-    }
+-#else
+     mDealer[portIndex].clear();
+-#endif
++
+     return OK;
+ }
+ 
+@@ -1552,17 +1517,6 @@ status_t ACodec::configureCodec(
+     bool haveNativeWindow = msg->findObject("native-window", &obj)
+             && obj != NULL && video && !encoder;
+     mStoreMetaDataInOutputBuffers = false;
+-#ifdef MTK_HARDWARE
+-    //move from mediacodec to acodec
+-    if (!strncasecmp("video/", mime, 6))
+-    {
+-        if ( (obj == NULL) && (!encoder) ) {
+-            //demandNormalYUV = false;
+-            mIsDemandNormalYUV = true;
+-            ALOGD("offer NormalYUV for JAVA framework enabled");
+-        }
+-    }
+-#endif
+     if (video && !encoder) {
+         inputFormat->setInt32("adaptive-playback", false);
+ 
+@@ -1892,12 +1846,6 @@ status_t ACodec::configureCodec(
+             if (!msg->findInt32("aac-profile", &aacProfile)) {
+                 aacProfile = OMX_AUDIO_AACObjectNull;
+             }
+-#ifndef ANDROID_DEFAULT_CODE
+-            if (!msg->findInt32("bitrate", &bitRate)) {
+-                bitRate = 0;
+-                ALOGE("cannot find aac bit rate");
+-            }
+-#endif //ANDROID_DEFAULT_CODE
+             if (!msg->findInt32("aac-sbr-mode", &sbrMode)) {
+                 sbrMode = -1;
+             }
+@@ -2127,7 +2075,7 @@ status_t ACodec::configureCodec(
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG2, mime)) ||
+ #ifdef MTK_HARDWARE
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP9, mime)) ||            
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VPX, mime))
++            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP8, mime))
+ #endif
+         ) { 
+             mIsVideoDecoder = true;
+@@ -2761,9 +2709,6 @@ static const struct VideoCodingMapEntry {
+     { MEDIA_MIMETYPE_VIDEO_MPEG2, OMX_VIDEO_CodingMPEG2 },
+     { MEDIA_MIMETYPE_VIDEO_VP8, OMX_VIDEO_CodingVP8 },
+     { MEDIA_MIMETYPE_VIDEO_VP9, OMX_VIDEO_CodingVP9 },
+-#ifdef MTK_HARDWARE
+-    { MEDIA_MIMETYPE_VIDEO_VPX, OMX_VIDEO_CodingVP8 },
+-#endif
+ };
+ 
+ static status_t GetVideoCodingTypeFromMime(
+@@ -3684,8 +3629,8 @@ status_t ACodec::setupErrorCorrectionParameters() {
+     }
+ 
+     errorCorrectionType.bEnableHEC = OMX_FALSE;
+-    errorCorrectionType.bEnableResync = OMX_TRUE;
+-    errorCorrectionType.nResynchMarkerSpacing = 256;
++    errorCorrectionType.bEnableResync = OMX_FALSE;
++    errorCorrectionType.nResynchMarkerSpacing = 0;
+     errorCorrectionType.bEnableDataPartitioning = OMX_FALSE;
+     errorCorrectionType.bEnableRVLC = OMX_FALSE;
+ 
+@@ -5032,24 +4977,6 @@ bool ACodec::BaseState::onOMXEmptyBufferDone(IOMX::buffer_id bufferID) {
+             break;
+ 
+         case RESUBMIT_BUFFERS:
+-#ifdef MTK_HARDWARE
+-            // mtk80902: porting from AwesomePlayer: prevent buffering twice
+-            if (mCodec->mMaxQueueBufferNum > 0) {
+-                size_t n = mCodec->mBuffers[kPortIndexInput].size();
+-                size_t others = 0;
+-                for (size_t i = 0; i < n; ++i) {
+-                    BufferInfo *info = &mCodec->mBuffers[kPortIndexInput].editItemAt(i);
+-                    if (info->mStatus == BufferInfo::OWNED_BY_COMPONENT)
+-                        others++;
+-                }
+-
+-                if (mCodec->mMaxQueueBufferNum < others) {
+-                    ALOGV("mMaxQueueBufferNum %d < component occupied %d, wait for next trigger.",
+-                    mCodec->mMaxQueueBufferNum, others);
+-                    break;
+-                }
+-            }
+-#endif
+             postFillThisBuffer(info);
+             break;
+ 
+@@ -5071,41 +4998,11 @@ void ACodec::BaseState::postFillThisBuffer(BufferInfo *info) {
+ 
+     CHECK_EQ((int)info->mStatus, (int)BufferInfo::OWNED_BY_US);
+ 
+-#ifdef MTK_HARDWARE
+-    if (mCodec->mLeftOverBuffer != NULL) {
+-        ALOGD("[%s] left over buffer (id = %p)", 
+-               mCodec->mComponentName.c_str(), info->mBufferID);
+-        info->mData->meta()->clear();
+-
+-        sp<AMessage> reply = new AMessage(kWhatInputBufferFilled, mCodec->id());
+-        reply->setInt32("buffer-id", info->mBufferID);
+-        reply->setBuffer("buffer", mCodec->mLeftOverBuffer);
+-        mCodec->mLeftOverBuffer = NULL;
+-//        reply->setInt32("partial", 1);
+-        reply->post();
+-
+-        info->mStatus = BufferInfo::OWNED_BY_UPSTREAM;
+-        return;
+-    }
+-#endif
+     sp<AMessage> notify = mCodec->mNotify->dup();
+     notify->setInt32("what", CodecBase::kWhatFillThisBuffer);
+     notify->setInt32("buffer-id", info->mBufferID);
+ 
+-#ifdef MTK_HARDWARE
+-   {
+-            
+-         void *mediaBuffer;
+-         if(info->mData->meta()->findPointer("mediaBuffer", &mediaBuffer)
+-                 && mediaBuffer != NULL){
+-             //ALOGI("postFillThisBuffer release mediabuffer");
+-             ((MediaBuffer *)mediaBuffer)->release();
+-         }
+-    info->mData->meta()->clear();
+-    }
+-#else
+     info->mData->meta()->clear();
+-#endif
+     notify->setBuffer("buffer", info->mData);
+ 
+     sp<AMessage> reply = new AMessage(kWhatInputBufferFilled, mCodec->id());
+@@ -5153,31 +5050,6 @@ void ACodec::BaseState::onInputBufferFilled(const sp<AMessage> &msg) {
+ 
+     info->mStatus = BufferInfo::OWNED_BY_US;
+ 
+-#ifdef MTK_HARDWARE
+-    if ( (true == mCodec->mIsDumpFile ) && (buffer != NULL) ) {
+-        int64_t tt;
+-        int32_t isCSD = false;
+-        buffer->meta()->findInt64("timeUs", &tt);
+-        ALOGD("[%s]buffer to be empty, %lld, %p, size = %d", mCodec->mComponentName.c_str(), tt, buffer->data(), (int)buffer->size());
+-        buffer->meta()->findInt32("csd", &isCSD) ;
+-        if (buffer->size() >= 4) {
+-            ALOGD("[%s]\t\t %s, %02x %02x %02x %02x", 
+-                    mCodec->mComponentName.c_str(), 
+-                    isCSD ? "codec_cfg":"", 
+-                    buffer->data()[0], buffer->data()[1] , buffer->data()[2] , buffer->data()[3]);
+-        }
+-
+-        if ((mCodec->mDumpFile != NULL) && 
+-                (!strcmp(mCodec->mComponentName.c_str(), "OMX.MTK.VIDEO.DECODER.AVC"))) {
+-            if (!isCSD) {
+-                char nal_prefix[] = {0, 0, 0, 1};
+-                fwrite(nal_prefix, 1, 4, mCodec->mDumpFile);
+-            }
+-            size_t nWrite = fwrite(buffer->data(), 1, buffer->size(), mCodec->mDumpFile);
+-            ALOGD("written %d bytes, ftell = %d", nWrite, (int)ftell(mCodec->mDumpFile));
+-        }
+-    }
+-#endif
+     switch (mode) {
+         case KEEP_BUFFERS:
+         {
+@@ -5212,36 +5084,8 @@ void ACodec::BaseState::onInputBufferFilled(const sp<AMessage> &msg) {
+                          mCodec->mComponentName.c_str(),
+                          bufferID,
+                          buffer.get(), info->mData.get());
+-#ifdef MTK_HARDWARE
+-                    int capacity = info->mData->capacity();
+-                    if (buffer->size() > capacity) {
+-                        if (mCodec->mSupportsPartialFrames) {
+-                            sp<ABuffer> leftBuffer = new ABuffer(buffer->size() - capacity);
+-                            memcpy(leftBuffer->data(), buffer->data() + capacity, buffer->size() - capacity);
+-                            leftBuffer->meta()->setInt64("timeUs", timeUs);
+-                            if (isCSD) {
+-                                leftBuffer->meta()->setInt32("csd", isCSD);
+-                            }
+-
+-                            ALOGI("[%s] split big input buffer %d to %d + %d",
+-                                    mCodec->mComponentName.c_str(),  buffer->size(), capacity, leftBuffer->size());
+-
+-                            buffer->setRange(buffer->offset(), capacity);
+-                            flags &= ~OMX_BUFFERFLAG_ENDOFFRAME;
+ 
+-                            mCodec->mLeftOverBuffer = leftBuffer;
+-                        } else {
+-                            ALOGE("Codec's input buffers are too small to accomodate "
+-                                    " buffer read from source (info->mSize = %d, srcLength = %d)",
+-                                    info->mData->capacity(), buffer->size());
+-                            mCodec->signalError();
+-                            break;
+-                            //CHECK_LE(buffer->size(), info->mData->capacity());
+-                        }
+-                    }
+-#else
+                     CHECK_LE(buffer->size(), info->mData->capacity());
+-#endif
+                     memcpy(info->mData->data(), buffer->data(), buffer->size());
+                 }
+ 
+@@ -5397,10 +5241,6 @@ bool ACodec::BaseState::onOMXFillBufferDone(
+     }
+ #endif
+ 
+-#ifdef MTK_HARDWARE
+-    BufferInfo *infoOmx = NULL;
+-    size_t mRangeLength = 0;
+-#endif
+     BufferInfo *info =
+         mCodec->findBufferByID(kPortIndexOutput, bufferID, &index);
+ 
+@@ -5417,60 +5257,16 @@ bool ACodec::BaseState::onOMXFillBufferDone(
+ 
+         case RESUBMIT_BUFFERS:
+         {
+-
+             if (rangeLength == 0 && (!(flags & OMX_BUFFERFLAG_EOS)
+                     || mCodec->mPortEOS[kPortIndexOutput])) {
+-#ifdef MTK_HARDWARE
+-                //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-                if((!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-                {
+-                    ALOGV("[%s] calling fillBuffer infoOmx %p",
+-                         mCodec->mComponentName.c_str(), infoOmx->mBufferID);
+-                    if (mCodec->mPortEOS[kPortIndexOutput])
+-                    {//Bruce 2013/01/21 if after eos, we don't send fill_this_buffer again, or it may cause busy loop on Mtk Omx component
+-                        ALOGE("Output already EOS!");
+-                        break;
+-                    }
+-                    CHECK_EQ(mCodec->mOMX->fillBuffer(
+-                                mCodec->mNode, infoOmx->mBufferID),
+-                             (status_t)OK);
+-                    
+-                    infoOmx->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-                    info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-
+-                }
+-                else
+-                {
+-                ALOGV("[%s] calling fillBuffer %p",
+-                     mCodec->mComponentName.c_str(), info->mBufferID);
+-
+-                    if (mCodec->mPortEOS[kPortIndexOutput])
+-                    {//Bruce 2013/01/21 if after eos, we don't send fill_this_buffer again, or it may cause busy loop on Mtk Omx component
+-                        ALOGE("Output already EOS!");
+-                        break;
+-                    }
+-                CHECK_EQ(mCodec->mOMX->fillBuffer(
+-                            mCodec->mNode, info->mBufferID),
+-                         (status_t)OK);
+-
+-                info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-                }
+-#else
+                 ALOGV("[%s] calling fillBuffer %u",
+                      mCodec->mComponentName.c_str(), info->mBufferID);
+-#ifdef MTK_HARDWARE
+-                if (mCodec->mPortEOS[kPortIndexOutput])
+-                {//Bruce 2013/01/21 if after eos, we don't send fill_this_buffer again, or it may cause busy loop on Mtk Omx component
+-                    ALOGE("Output already EOS!");
+-                break;
+-            }
+-#endif
++
+                 CHECK_EQ(mCodec->mOMX->fillBuffer(
+                             mCodec->mNode, info->mBufferID),
+                          (status_t)OK);
+ 
+                 info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-#endif
+                 break;
+             }
+ 
+@@ -5488,23 +5284,7 @@ bool ACodec::BaseState::onOMXFillBufferDone(
+                 info->mData->meta()->setInt32("rangeOffset", rangeOffset);
+                 info->mData->meta()->setInt32("rangeLength", rangeLength);
+             } else {
+-#ifdef MTK_HARDWARE
+-            //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-            if( (!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-            {
+-                //for normal YUV, set rangeLength without specific alighments and update 0 size from FBD msg
+-                if( rangeLength == 0 )
+                 info->mData->setRange(rangeOffset, rangeLength);
+-                else
+-                    info->mData->setRange(rangeOffset, mRangeLength);
+-                ALOGV("set rangeLength %d, modified mRangeLength %d", rangeLength, mRangeLength);
+-            }
+-            else
+-                info->mData->setRange(rangeOffset, rangeLength);
+-#else
+-            info->mData->setRange(rangeOffset, rangeLength);
+-
+-#endif
+             }
+ #if 0
+             if (mCodec->mNativeWindow == NULL) {
+@@ -5532,13 +5312,6 @@ bool ACodec::BaseState::onOMXFillBufferDone(
+ 
+             notify->post();
+ 
+-#ifdef MTK_HARDWARE
+-            //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-            if( (!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-            {
+-                infoOmx->mStatus = BufferInfo::OWNED_BY_DOWNSTREAM;
+-            }
+-#endif
+             info->mStatus = BufferInfo::OWNED_BY_DOWNSTREAM;
+ 
+             if (flags & OMX_BUFFERFLAG_EOS) {
+@@ -5570,89 +5343,11 @@ bool ACodec::BaseState::onOMXFillBufferDone(
+ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
+     IOMX::buffer_id bufferID;
+     CHECK(msg->findInt32("buffer-id", (int32_t*)&bufferID));
+-#ifdef MTK_HARDWARE
+-    ALOGV("onOutputBufferDrained bufferID %x", bufferID);
+-
+-    int64_t delayTimeUs; 
+-    int64_t realTimeUs;
+-    if( msg->findInt64("delaytimeus", &delayTimeUs) && msg->findInt64("realtimeus", &realTimeUs)) {
+-        int64_t realDelayTimeUs = realTimeUs - ALooper::GetNowUs();
+-
+-        if (realDelayTimeUs > delayTimeUs) {
+-            ALOGW("realDelayTimeUs(%lldus) is latger than delayTimeUs(%lldus), reset it to delayTimeUs", realDelayTimeUs, delayTimeUs);
+-            realDelayTimeUs = delayTimeUs;
+-        }
+-
+-        if(realDelayTimeUs > 0){
+-            if(realDelayTimeUs < 5000)
+-                ALOGW("realDelayTimeUs(%lld) is too small", realDelayTimeUs);
+-            else if( realDelayTimeUs > 50000 )
+-
+-           {
+-                ALOGW("realDelayTimeUs(%lld) is too long, config to 30ms", realDelayTimeUs);
+-                realDelayTimeUs = 30000;
+-            }
+-            else
+-                ALOGD("realDelayTimeUs(%lld)", realDelayTimeUs);
+-
+-            sp<AMessage> delay = new AMessage(kWhatOutputBufferDrained, mCodec->id());
+-            int32_t render = 0;
+-            android_native_rect_t mCrop;
+-            OMX_CONFIG_RECTTYPE mRect;
+-
+-            msg->findInt32("render", &render);
+-            if (msg->findRect("crop",
+-                    &mCrop.left, &mCrop.top, &mCrop.right, &mCrop.bottom)) {
+-
+-                ALOGD("send native_window_set_crop again");
+-                mRect.nLeft = mCrop.left;
+-                mRect.nTop = mCrop.top;
+-                mRect.nWidth = mCrop.right;
+-                mRect.nHeight = mCrop.bottom;
+-
+-                delay->setRect(
+-                        "crop",
+-                        mRect.nLeft,
+-                        mRect.nTop,
+-                        mRect.nLeft + mRect.nWidth,
+-                        mRect.nTop + mRect.nHeight);
+-            }
+-
+-            delay->setInt32("render", render);
+-            delay->setInt32("buffer-id", bufferID);
+-            delay->post(realDelayTimeUs);
+-            return;
+-        }
+-        else {
+-            ALOGW("video buffer late, no need delay");
+-        }
+-    }
+-
+-    BufferInfo *infoOMX = NULL;
+-    BufferInfo *info = NULL;
+-    ssize_t index;
+-    //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-    if( (!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-    {
+-        ssize_t index_tmp;
+-        //get bufferInfo from bufferID in convert component for JAVA 
+-        info = mCodec->findBufferByID(kPortIndexOutput, bufferID, &index_tmp);
+-        ALOGV("findBufferByID index_tmp %x", index_tmp);
+-        //get bufferInfo from bufferID in OMX component
+-        CHECK_EQ((int)info->mStatus, (int)BufferInfo::OWNED_BY_DOWNSTREAM);
+-    }
+-    else
+-    {
+-        info = mCodec->findBufferByID(kPortIndexOutput, bufferID, &index);
+-        CHECK_EQ((int)info->mStatus, (int)BufferInfo::OWNED_BY_DOWNSTREAM);
+-    }
+-#else
+     ssize_t index;
+     BufferInfo *info =
+         mCodec->findBufferByID(kPortIndexOutput, bufferID, &index);
+     CHECK_EQ((int)info->mStatus, (int)BufferInfo::OWNED_BY_DOWNSTREAM);
+ 
+-#endif
+     android_native_rect_t crop;
+     if (msg->findRect("crop",
+             &crop.left, &crop.top, &crop.right, &crop.bottom)) {
+@@ -5703,14 +5398,6 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
+             info->mStatus = BufferInfo::OWNED_BY_US;
+         }
+     } else {
+-#ifdef MTK_HARDWARE
+-        //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-        if((!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-        {
+-            if (infoOMX != NULL)
+-                infoOMX->mStatus = BufferInfo::OWNED_BY_US;
+-        }
+-#endif
+         if (mCodec->mNativeWindow != NULL
+             && msg->findInt32("render", &render) && render == 0
+             && (info->mData == NULL || info->mData->size() != 0)) {
+@@ -5745,34 +5432,6 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
+                     info = mCodec->dequeueBufferFromNativeWindow();
+                 }
+ 
+-#ifdef MTK_HARDWARE
+-                //check OMX.MTK.VIDEO.DECODER. prefix for video decoder only
+-                if((!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV==true))
+-                {
+-                if (info != NULL) {
+-                    ALOGV("[%s] calling fillBuffer %p",
+-                         mCodec->mComponentName.c_str(), info->mBufferID);
+-
+-                    CHECK_EQ(mCodec->mOMX->fillBuffer(mCodec->mNode, info->mBufferID),
+-                             (status_t)OK);
+-
+-                    info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-                        if (infoOMX != NULL)
+-                            infoOMX->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-                }
+-            }
+-                else
+-                {
+-                    if (info != NULL) {
+-                        ALOGV("[%s] calling fillBuffer %p",
+-                             mCodec->mComponentName.c_str(), info->mBufferID);
+-                        CHECK_EQ(mCodec->mOMX->fillBuffer(mCodec->mNode, info->mBufferID),
+-                                 (status_t)OK);
+-
+-                        info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+-                    }
+-                }
+-#else
+                 if (info != NULL) {
+                     ALOGV("[%s] calling fillBuffer %u",
+                          mCodec->mComponentName.c_str(), info->mBufferID);
+@@ -5782,7 +5441,6 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
+ 
+                     info->mStatus = BufferInfo::OWNED_BY_COMPONENT;
+                 }
+-#endif
+             }
+             break;
+         }
+@@ -5884,19 +5542,8 @@ bool ACodec::UninitializedState::onMessageReceived(const sp<AMessage> &msg) {
+ 
+ void ACodec::UninitializedState::onSetup(
+         const sp<AMessage> &msg) {
+-#ifdef MTK_HARDWARE
+-    int32_t bAutoRun = 1;
+-    if (!msg->findInt32("auto-run", &bAutoRun)) {
+-        bAutoRun = 1;        
+-    }
+-    ALOGD("auto run = %d", (int32_t)bAutoRun);
+-#endif
+     if (onAllocateComponent(msg)
+-            && mCodec->mLoadedState->onConfigureComponent(msg)
+-#ifdef MTK_HARDWARE
+-            && (bAutoRun)
+-#endif                                      
+-    ) {
++            && mCodec->mLoadedState->onConfigureComponent(msg)) {
+         mCodec->mLoadedState->onStart();
+     }
+ }
+@@ -6190,27 +5837,6 @@ bool ACodec::LoadedState::onConfigureComponent(
+                 return false;
+             }
+ 
+-#ifdef MTK_HARDWARE
+-    {
+-        int32_t dummy = 0;
+-
+-        char value[PROPERTY_VALUE_MAX];
+-        property_get("acodec.video.isProtect", value, "0");
+-        dummy = atof(value);
+-        if (dummy > 0) {
+-            mCodec->mFlags |= kFlagIsGrallocUsageProtected;
+-            ALOGD ("acodec.video.isProtect %x", dummy);
+-        }
+-        //ALOGD ("mCodec->mFlags %x", mCodec->mFlags);
+-
+-        dummy = 0;
+-        if( msg->findInt32("IsSecureVideo", &dummy)&& (dummy == 1) )
+-        {
+-            mCodec->mFlags |= kFlagIsGrallocUsageProtected;
+-           ALOGD("@debug: mCodec->mFlags |= kFlagIsGrallocUsageProtected %x", mCodec->mFlags);
+-        }
+-    }
+-#endif
+             mCodec->mNode = NULL;
+             AString componentName;
+             sp<CodecObserver> observer = new CodecObserver;
+@@ -6994,21 +6620,8 @@ bool ACodec::OutputPortSettingsChangedState::onOMXEvent(
+                 ALOGV("[%s] Output port now disabled.",
+                         mCodec->mComponentName.c_str());
+ 
+-#ifdef MTK_HARDWARE
+-                if((!strncmp("OMX.MTK.VIDEO.DECODER.", mCodec->mComponentName.c_str(), strlen("OMX.MTK.VIDEO.DECODER."))) && (mCodec->mIsDemandNormalYUV == true))
+-                {
+-                CHECK(mCodec->mBuffers[kPortIndexOutput].isEmpty());
+-                mCodec->mDealer[kPortIndexOutput].clear();
+-                }
+-                else
+-                {
+                 CHECK(mCodec->mBuffers[kPortIndexOutput].isEmpty());
+                 mCodec->mDealer[kPortIndexOutput].clear();
+-                }
+-#else
+-                CHECK(mCodec->mBuffers[kPortIndexOutput].isEmpty());
+-                mCodec->mDealer[kPortIndexOutput].clear();
+-#endif
+ 
+                 CHECK_EQ(mCodec->mOMX->sendCommand(
+                             mCodec->mNode, OMX_CommandPortEnable, kPortIndexOutput),
+@@ -7354,7 +6967,7 @@ void ACodec::FlushingState::changeStateIfWeOwnAllBuffers() {
+         mCodec->waitUntilAllPossibleNativeWindowBuffersAreReturnedToUs();
+ 
+         sp<AMessage> notify = mCodec->mNotify->dup();
+-        notify->setInt32("what", ACodec::kWhatFlushCompleted);
++        notify->setInt32("what", CodecBase::kWhatFlushCompleted);
+         notify->post();
+ 
+         mCodec->mPortEOS[kPortIndexInput] =
+diff --git a/media/libstagefright/Android.mk b/media/libstagefright/Android.mk
+index ac98247a9..824e8ac37 100644
+--- a/media/libstagefright/Android.mk
++++ b/media/libstagefright/Android.mk
+@@ -226,14 +226,12 @@ LOCAL_MTK_PATH:=$(TOP)/mediatek/frameworks-ext/av/media/libstagefright
+     LOCAL_C_INCLUDES += \
+         $(TOP)/mediatek/kernel/include \
+         $(TOP)/mediatek/hardware/dpframework/inc \
+-        $(TOP)/hardware/mediatek/media/include \
+         $(TOP)/frameworks/native/include/media/openmax \
+         $(TOP)/mediatek/frameworks/av/media/libstagefright/include \
+         $(TOP)/mediatek/frameworks-ext/av/media/libstagefright/include \
+         $(TOP)/frameworks/native/include/media/editor \
+         $(TOP)/external/skia/include/images \
+         $(TOP)/external/skia/include/core \
+-        $(TOP)/frameworks/av/libvideoeditor/lvpp
+ 
+     LOCAL_SHARED_LIBRARIES +=  \
+         libdpframework \
+@@ -246,9 +244,6 @@ LOCAL_MTK_PATH:=$(TOP)/mediatek/frameworks-ext/av/media/libstagefright
+         libskia \
+         libcustom_prop
+ 
+-LOCAL_SRC_FILES += \
+-        I420ColorConverter.cpp
+-
+ endif
+ 
+ LOCAL_SHARED_LIBRARIES += \
+diff --git a/media/libstagefright/MediaCodec.cpp b/media/libstagefright/MediaCodec.cpp
+index 5a84f07af..cf7aa4373 100755
+--- a/media/libstagefright/MediaCodec.cpp
++++ b/media/libstagefright/MediaCodec.cpp
+@@ -193,13 +193,7 @@ status_t MediaCodec::init(const AString &name, bool nameIsType, bool encoder) {
+     mCodec = new ACodec;
+     bool needDedicatedLooper = false;
+     if (nameIsType && !strncasecmp(name.c_str(), "video/", 6)) {
+-#ifdef MTK_HARDWARE
+-        //needDedicatedLooper = true;
+-        // Not to create video CodecLooper for performance 
+-        needDedicatedLooper = false;
+-#else
+         needDedicatedLooper = true;
+-#endif
+     } else {
+         AString tmp = name;
+         if (tmp.endsWith(".secure")) {
+diff --git a/media/libstagefright/MediaDefs.cpp b/media/libstagefright/MediaDefs.cpp
+index 0befff9ec..54ebb6c87 100644
+--- a/media/libstagefright/MediaDefs.cpp
++++ b/media/libstagefright/MediaDefs.cpp
+@@ -39,9 +39,6 @@ namespace android {
+ 
+ const char *MEDIA_MIMETYPE_IMAGE_JPEG = "image/jpeg";
+ 
+-#ifdef MTK_HARDWARE
+-const char *MEDIA_MIMETYPE_VIDEO_VPX = "video/x-vnd.on2.vp8";
+-#endif
+ const char *MEDIA_MIMETYPE_VIDEO_VP8 = "video/x-vnd.on2.vp8";
+ const char *MEDIA_MIMETYPE_VIDEO_VP9 = "video/x-vnd.on2.vp9";
+ const char *MEDIA_MIMETYPE_VIDEO_AVC = "video/avc";
+diff --git a/media/libstagefright/omx/OMX.cpp b/media/libstagefright/omx/OMX.cpp
+index 467c33b0d..c0d6feb2b 100644
+--- a/media/libstagefright/omx/OMX.cpp
++++ b/media/libstagefright/omx/OMX.cpp
+@@ -87,12 +87,7 @@ OMX::CallbackDispatcher::CallbackDispatcher(OMXNodeInstance *owner)
+     : mOwner(owner),
+       mDone(false) {
+     mThread = new CallbackDispatcherThread(this);
+-#ifndef ANDROID_DEFAULT_CODE
+-    // Promote OMX callback dipatcher to AUDIO priority
+-    mThread->run("OMXCallbackDisp", ANDROID_PRIORITY_AUDIO);
+-#else
+     mThread->run("OMXCallbackDisp", ANDROID_PRIORITY_FOREGROUND);
+-#endif //ANDROID_DEFAULT_CODE
+ }
+ 
+ OMX::CallbackDispatcher::~CallbackDispatcher() {
+-- 
+2.15.1
+

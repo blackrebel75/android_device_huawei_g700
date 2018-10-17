@@ -1,0 +1,26 @@
+From 3dc4dc26fd09eb33ef8be9b0787bdc4ccec8fff1 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 14 Jun 2018 19:26:15 +0200
+Subject: [PATCH 3/4] [MTK] Add setpolicyparameters for mtk audio policy
+
+---
+ include/hardware/audio_policy.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/include/hardware/audio_policy.h b/include/hardware/audio_policy.h
+index 84827e6..d52ab40 100644
+--- a/include/hardware/audio_policy.h
++++ b/include/hardware/audio_policy.h
+@@ -250,6 +250,9 @@ struct audio_policy {
+     /* check if offload is possible for given sample rate, bitrate, duration, ... */
+     bool (*is_offload_supported)(const struct audio_policy *pol,
+                                 const audio_offload_info_t *info);
++    #ifdef MTK_HARDWARE
++    int (*set_policy_parameters)(struct audio_policy *pol,int par1, int par2 ,int par3,int par4);
++    #endif
+ };
+ 
+ 
+-- 
+2.15.1
+

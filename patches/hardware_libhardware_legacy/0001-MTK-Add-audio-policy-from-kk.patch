@@ -1,0 +1,129 @@
+From e729bcab2ad5bb103da55fde0ec620cc0ed25ca0 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 1 Feb 2018 16:10:13 +0100
+Subject: [PATCH] [MTK] Add audio policy from kk
+
+---
+ audio/AudioHardwareInterface.cpp                 | 10 ++++++++++
+ audio/AudioPolicyManagerBase.cpp                 | 20 ++++++++++++++++++--
+ audio/audio_policy_hal.cpp                       |  4 ++++
+ include/hardware_legacy/AudioHardwareBase.h      |  4 ++++
+ include/hardware_legacy/AudioHardwareInterface.h |  4 ++++
+ 5 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/audio/AudioHardwareInterface.cpp b/audio/AudioHardwareInterface.cpp
+index dbf6f33..81b3f43 100644
+--- a/audio/AudioHardwareInterface.cpp
++++ b/audio/AudioHardwareInterface.cpp
+@@ -96,6 +96,16 @@ status_t AudioHardwareBase::setMode(int mode)
+     return NO_ERROR;
+ }
+ 
++#ifdef MTK_HARDWARE
++status_t AudioHardwareBase::SetAudioData(int par1,size_t len,void *ptr)
++{
++    return NO_ERROR;
++}
++status_t AudioHardwareBase::GetAudioData(int par1,size_t len,void *ptr)
++{
++    return NO_ERROR;
++}
++#endif
+ // default implementation
+ status_t AudioHardwareBase::setParameters(const String8& keyValuePairs)
+ {
+diff --git a/audio/AudioPolicyManagerBase.cpp b/audio/AudioPolicyManagerBase.cpp
+index 301c058..fb3d6be 100644
+--- a/audio/AudioPolicyManagerBase.cpp
++++ b/audio/AudioPolicyManagerBase.cpp
+@@ -420,7 +420,13 @@ void AudioPolicyManagerBase::setForceUse(AudioSystem::force_use usage, AudioSyst
+             config != AudioSystem::FORCE_WIRED_ACCESSORY &&
+             config != AudioSystem::FORCE_ANALOG_DOCK &&
+             config != AudioSystem::FORCE_DIGITAL_DOCK && config != AudioSystem::FORCE_NONE &&
+-            config != AudioSystem::FORCE_NO_BT_A2DP) {
++            config != AudioSystem::FORCE_NO_BT_A2DP
++#ifdef MTK_HARDWARE
++            // FM-radio uses the media channel and the app can force the use of the speaker
++            // on-demand.
++            && config != AudioSystem::FORCE_SPEAKER
++#endif
++            ) {
+             ALOGW("setForceUse() invalid config %d for FOR_MEDIA", config);
+             return;
+         }
+@@ -2464,7 +2470,11 @@ audio_devices_t AudioPolicyManagerBase::getNewDevice(audio_io_handle_t output, b
+         device = getDeviceForStrategy(STRATEGY_SONIFICATION, fromCache);
+     } else if (outputDesc->isStrategyActive(STRATEGY_SONIFICATION_RESPECTFUL)) {
+         device = getDeviceForStrategy(STRATEGY_SONIFICATION_RESPECTFUL, fromCache);
+-    } else if (outputDesc->isStrategyActive(STRATEGY_MEDIA)) {
++    } else if (outputDesc->isStrategyActive(STRATEGY_MEDIA)
++#ifdef MTK_HARDWARE
++        || outputDesc->isStrategyActive(STRATEGY_MEDIA, SONIFICATION_HEADSET_MUSIC_DELAY)
++#endif
++        ) {
+         device = getDeviceForStrategy(STRATEGY_MEDIA, fromCache);
+     } else if (outputDesc->isStrategyActive(STRATEGY_DTMF)) {
+         device = getDeviceForStrategy(STRATEGY_DTMF, fromCache);
+@@ -2696,6 +2706,12 @@ audio_devices_t AudioPolicyManagerBase::getDeviceForStrategy(routing_strategy st
+                 device2 = mAvailableOutputDevices & AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER;
+             }
+         }
++#ifdef MTK_HARDWARE
++        if (!isInCall() && device2 == AUDIO_DEVICE_NONE
++            && mForceUse[AudioSystem::FOR_MEDIA] == AudioSystem::FORCE_SPEAKER) {
++            device2 = mAvailableOutputDevices & AUDIO_DEVICE_OUT_SPEAKER;
++        }
++#endif
+         if (device2 == AUDIO_DEVICE_NONE) {
+             device2 = mAvailableOutputDevices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE;
+         }
+diff --git a/audio/audio_policy_hal.cpp b/audio/audio_policy_hal.cpp
+index 87c4131..e7a2f14 100644
+--- a/audio/audio_policy_hal.cpp
++++ b/audio/audio_policy_hal.cpp
+@@ -374,8 +374,12 @@ static int create_legacy_ap(const struct audio_policy_device *device,
+     lap->policy.unregister_effect = ap_unregister_effect;
+     lap->policy.set_effect_enabled = ap_set_effect_enabled;
+     lap->policy.is_stream_active = ap_is_stream_active;
++#ifndef ICS_AUDIO_BLOB
++#ifndef MR1_AUDIO_BLOB
+     lap->policy.is_stream_active_remotely = ap_is_stream_active_remotely;
++#endif
+     lap->policy.is_source_active = ap_is_source_active;
++#endif
+     lap->policy.dump = ap_dump;
+     lap->policy.is_offload_supported = ap_is_offload_supported;
+ 
+diff --git a/include/hardware_legacy/AudioHardwareBase.h b/include/hardware_legacy/AudioHardwareBase.h
+index eac40dc..b8b2b05 100644
+--- a/include/hardware_legacy/AudioHardwareBase.h
++++ b/include/hardware_legacy/AudioHardwareBase.h
+@@ -51,6 +51,10 @@ public:
+     /**This method dumps the state of the audio hardware */
+     virtual status_t dumpState(int fd, const Vector<String16>& args);
+ 
++#ifdef MTK_HARDWARE
++    virtual status_t SetAudioData(int par1, size_t len, void *ptr);
++    virtual status_t GetAudioData(int par1, size_t len, void *ptr);
++#endif
+ protected:
+     /** returns true if the given mode maps to a telephony or VoIP call is in progress */
+     virtual bool     isModeInCall(int mode)
+diff --git a/include/hardware_legacy/AudioHardwareInterface.h b/include/hardware_legacy/AudioHardwareInterface.h
+index 85363cd..1b98ce7 100644
+--- a/include/hardware_legacy/AudioHardwareInterface.h
++++ b/include/hardware_legacy/AudioHardwareInterface.h
+@@ -260,6 +260,10 @@ public:
+     virtual status_t    setParameters(const String8& keyValuePairs) = 0;
+     virtual String8     getParameters(const String8& keys) = 0;
+ 
++#ifdef MTK_HARDWARE
++    virtual status_t SetAudioData(int par1,size_t len,void *ptr)=0;
++    virtual status_t GetAudioData(int par1,size_t len,void *ptr)=0;
++#endif
+     // Returns audio input buffer size according to parameters passed or 0 if one of the
+     // parameters is not supported
+     virtual size_t    getInputBufferSize(uint32_t sampleRate, int format, int channelCount) = 0;
+-- 
+2.15.1
+

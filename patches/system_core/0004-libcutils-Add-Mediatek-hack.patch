@@ -1,0 +1,64 @@
+From a0e57db5362251e958451691ced9e1164d5d9927 Mon Sep 17 00:00:00 2001
+From: Dr-Shadow <xxdrshadowxx@gmail.com>
+Date: Fri, 1 Aug 2014 09:25:45 +0200
+Subject: [PATCH 04/27] libcutils: Add Mediatek hack
+
+Change-Id: Ibd3fcfff184ee7003260b97e90b8991d747d52dc
+
+# Conflicts:
+#	libcutils/Android.mk
+---
+ libcutils/Android.mk        | 19 ++++++++++++++++++-
+ libcutils/MediatekHacks.cpp |  3 +++
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+ create mode 100644 libcutils/MediatekHacks.cpp
+
+diff --git a/libcutils/Android.mk b/libcutils/Android.mk
+index 66137713..06538ed8 100644
+--- a/libcutils/Android.mk
++++ b/libcutils/Android.mk
+@@ -119,7 +119,8 @@ LOCAL_SRC_FILES := $(commonSources) \
+         uevent.c \
+ 
+ ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
+-LOCAL_SRC_FILES += pmem-dev.cpp
++LOCAL_SRC_FILES += pmem-dev.cpp \
++                   MediatekHacks.cpp
+ endif
+ 
+ LOCAL_SRC_FILES_arm += \
+@@ -145,6 +146,22 @@ LOCAL_CFLAGS_mips += -DHAVE_MEMSET16 -DHAVE_MEMSET32
+ LOCAL_CFLAGS_x86 += -DHAVE_MEMSET16 -DHAVE_MEMSET32
+ LOCAL_CFLAGS_x86_64 += -DHAVE_MEMSET16 -DHAVE_MEMSET32
+ 
++
++ifeq ($(TARGET_ARCH),arm)
++LOCAL_SRC_FILES += arch-arm/memset32.S
++else  # !arm
++ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
++LOCAL_CFLAGS += -DHAVE_MEMSET16 -DHAVE_MEMSET32
++LOCAL_SRC_FILES += arch-x86/android_memset16.S arch-x86/android_memset32.S memory.c
++else # !x86-atom
++ifeq ($(TARGET_ARCH),mips)
++LOCAL_SRC_FILES += arch-mips/android_memset.c
++else # !mips
++LOCAL_SRC_FILES += memory.c
++endif # !mips
++endif # !x86-atom
++endif # !arm
++
+ ifneq ($(TARGET_RECOVERY_PRE_COMMAND),)
+     LOCAL_CFLAGS += -DRECOVERY_PRE_COMMAND='$(TARGET_RECOVERY_PRE_COMMAND)'
+ endif
+diff --git a/libcutils/MediatekHacks.cpp b/libcutils/MediatekHacks.cpp
+new file mode 100644
+index 00000000..3389e661
+--- /dev/null
++++ b/libcutils/MediatekHacks.cpp
+@@ -0,0 +1,3 @@
++extern "C" {
++	int ifc_set_throttle(const char *ifname, int rxKbps, int txKbps) { return 0; }
++}
+-- 
+2.15.1
+

@@ -1,0 +1,38 @@
+From 896912c9b8737e4a01e4f067e6785f05233b027a Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 15 Feb 2017 02:55:04 +0100
+Subject: [PATCH 11/27] Fix for libbacktrace
+
+Change-Id: Ie53c711643ab939c7743bd9df560ff1b0584ca7a
+---
+ libbacktrace/Android.mk | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/libbacktrace/Android.mk b/libbacktrace/Android.mk
+index 5f19b4ba..06b8c19a 100755
+--- a/libbacktrace/Android.mk
++++ b/libbacktrace/Android.mk
+@@ -68,9 +68,6 @@ libbacktrace_shared_libraries_host := \
+ libbacktrace_static_libraries_host := \
+ 	libcutils \
+ 
+-libbacktrace_ldlibs_host := \
+-	-lpthread \
+-	-lrt \
+ else
+ libbacktrace_src_files += \
+ 	Corkscrew.cpp \
+@@ -87,6 +84,10 @@ libbacktrace_shared_libraries_target += \
+ libbacktrace_ldlibs_host := \
+ 	-ldl \
+ 
++libbacktrace_ldlibs_host += \
++	-lpthread \
++	-lrt \
++
+ endif
+ 
+ module := libbacktrace
+-- 
+2.15.1
+

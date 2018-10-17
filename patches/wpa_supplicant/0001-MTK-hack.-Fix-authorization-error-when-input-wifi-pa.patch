@@ -1,0 +1,45 @@
+From 195bfd2068bcdd488f756dcac911a273f454ecff Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 18 Apr 2017 17:53:41 +0200
+Subject: [PATCH] MTK hack. Fix 'authorization error' when input wifi password.
+ (patch from here https://gerrit.omnirom.org/#/c/4834/)
+
+Change-Id: Ib881e4cff048b4ef023f0331178ca202004c2c76
+---
+ src/drivers/driver_nl80211.c | 4 ++++
+ wpa_supplicant/Android.mk    | 4 ++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/src/drivers/driver_nl80211.c b/src/drivers/driver_nl80211.c
+index d7e910b..f1efcac 100644
+--- a/src/drivers/driver_nl80211.c
++++ b/src/drivers/driver_nl80211.c
+@@ -6097,6 +6097,10 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
+ 	    !is_broadcast_ether_addr(addr))
+ 		return ret;
+ 
++#ifdef MTK_MT6589
++	return ret;
++#endif
++
+ 	msg = nlmsg_alloc();
+ 	if (!msg)
+ 		return -ENOMEM;
+diff --git a/wpa_supplicant/Android.mk b/wpa_supplicant/Android.mk
+index aef6115..4182eba 100644
+--- a/wpa_supplicant/Android.mk
++++ b/wpa_supplicant/Android.mk
+@@ -38,6 +38,10 @@ ifdef CONFIG_NO_ROAMING
+ L_CFLAGS += -DCONFIG_NO_ROAMING
+ endif
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++L_CFLAGS += -DMTK_MT6589
++endif
++
+ # Use Android specific directory for control interface sockets
+ L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
+ L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"
+-- 
+2.15.1
+

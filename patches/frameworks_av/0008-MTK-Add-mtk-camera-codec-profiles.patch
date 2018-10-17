@@ -1,0 +1,911 @@
+From 320342d9594707b4103e94bfd8027390727f6b55 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:43:50 +0200
+Subject: [PATCH 08/18] [MTK] Add mtk camera codec profiles
+
+---
+ include/media/MediaProfiles.h    |  78 ++++-
+ media/libmedia/MediaProfiles.cpp | 684 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 758 insertions(+), 4 deletions(-)
+
+diff --git a/include/media/MediaProfiles.h b/include/media/MediaProfiles.h
+index 0509a7c04..f981053e4 100755
+--- a/include/media/MediaProfiles.h
++++ b/include/media/MediaProfiles.h
+@@ -44,7 +44,22 @@ enum camcorder_quality {
+     CAMCORDER_QUALITY_HEVC4kUHD = 17,
+     CAMCORDER_QUALITY_HEVC4kDCI = 18,
+     CAMCORDER_QUALITY_HVGA = 19,
++#ifdef MTK_HARDWARE
++    CAMCORDER_QUALITY_MTK_LOW              = 20,
++    CAMCORDER_QUALITY_MTK_MEDIUM           = 21,
++    CAMCORDER_QUALITY_MTK_HIGH             = 22,
++    CAMCORDER_QUALITY_MTK_FINE             = 23,
++    CAMCORDER_QUALITY_MTK_NIGHT_LOW        = 24,
++    CAMCORDER_QUALITY_MTK_NIGHT_MEDIUM     = 25,
++    CAMCORDER_QUALITY_MTK_NIGHT_HIGH       = 26,
++    CAMCORDER_QUALITY_MTK_NIGHT_FINE       = 27,
++    CAMCORDER_QUALITY_MTK_LIVE_EFFECT      = 28,
++    CAMCORDER_QUALITY_MTK_H264_HIGH        = 29,
++    CAMCORDER_QUALITY_MTK_MPEG4_1080P      = 30,
++    CAMCORDER_QUALITY_LIST_END = 30,
++#else
+     CAMCORDER_QUALITY_LIST_END = 19,
++#endif
+ 
+     CAMCORDER_QUALITY_TIME_LAPSE_LIST_START = 1000,
+     CAMCORDER_QUALITY_TIME_LAPSE_LOW  = 1000,
+@@ -61,7 +76,22 @@ enum camcorder_quality {
+     CAMCORDER_QUALITY_TIME_LAPSE_WQVGA = 1012,
+     CAMCORDER_QUALITY_TIME_LAPSE_FWVGA = 1013,
+     CAMCORDER_QUALITY_TIME_LAPSE_4kDCI = 1014,
++#ifdef MTK_HARDWARE
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW              = 1015,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_MEDIUM           = 1016,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH             = 1017,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_FINE             = 1018,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW        = 1019,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_MEDIUM     = 1021,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH       = 1022,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_FINE       = 1023,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT      = 1024,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_H264_HIGH        = 1025,
++    CAMCORDER_QUALITY_MTK_TIME_LAPSE_MPEG4_1080P      = 1026,
++    CAMCORDER_QUALITY_TIME_LAPSE_LIST_END             = 1026,
++#else
+     CAMCORDER_QUALITY_TIME_LAPSE_LIST_END = 1014,
++#endif
+ 
+     CAMCORDER_QUALITY_HIGH_SPEED_LIST_START = 2000,
+     CAMCORDER_QUALITY_HIGH_SPEED_LOW  = 2000,
+@@ -72,6 +102,19 @@ enum camcorder_quality {
+     CAMCORDER_QUALITY_HIGH_SPEED_2160P = 2005,
+     CAMCORDER_QUALITY_HIGH_SPEED_LIST_END = 2005,
+ };
++
++#ifdef MTK_HARDWARE
++enum camcorder_mode {
++    CAMCORDER_DAY_MODE   = 1,
++    CAMCORDER_NIGHT_MODE = 2,
++};
++
++enum camera_id {
++    BACK_CAMERA  = 0,
++    FRONT_CAMERA = 1,
++};
++#endif
++
+ /**
+  * Set CIF as default maximum import and export resolution of video editor.
+  * The maximum import and export resolutions are platform specific,
+@@ -83,10 +126,10 @@ enum camcorder_quality {
+  * than video editor engine produces.
+  */
+ enum videoeditor_capability {
+-    VIDEOEDITOR_DEFAULT_MAX_INPUT_FRAME_WIDTH = 352,
+-    VIDEOEDITOR_DEFUALT_MAX_INPUT_FRAME_HEIGHT = 288,
+-    VIDEOEDITOR_DEFAULT_MAX_OUTPUT_FRAME_WIDTH = 352,
+-    VIDEOEDITOR_DEFUALT_MAX_OUTPUT_FRAME_HEIGHT = 288,
++    VIDEOEDITOR_DEFAULT_MAX_INPUT_FRAME_WIDTH = 1920,
++    VIDEOEDITOR_DEFUALT_MAX_INPUT_FRAME_HEIGHT = 1088,
++    VIDEOEDITOR_DEFAULT_MAX_OUTPUT_FRAME_WIDTH = 1280,
++    VIDEOEDITOR_DEFUALT_MAX_OUTPUT_FRAME_HEIGHT = 720,
+     VIDEOEDITOR_DEFAULT_MAX_PREFETCH_YUV_FRAMES = 6
+ };
+ 
+@@ -224,6 +267,10 @@ public:
+      */
+     Vector<int> getImageEncodingQualityLevels(int cameraId) const;
+ 
++#ifdef MTK_HARDWARE
++    String8 getCamcorderProfilesCaps(int id = 0);
++    size_t getCamcorderProfilesNum(int id = 0);
++#endif
+     /**
+      * Returns the start time offset (in ms) for the given camera Id.
+      * If the given camera Id does not exist, -1 will be returned.
+@@ -476,6 +523,26 @@ private:
+             MediaProfiles::CamcorderProfile **highTimeLapseProfile,
+             MediaProfiles::CamcorderProfile **highSpecificTimeLapseProfile);
+ 
++#ifdef MTK_HARDWARE
++    static CamcorderProfile *createMTKCamcorderProfile
++        (camcorder_quality quality, camcorder_mode CamMode, camera_id CamId);
++    static CamcorderProfile *createDefaultCamcorderFrontQcifProfile(camcorder_quality quality);
++    static CamcorderProfile *createDefaultCamcorderFrontCifProfile(camcorder_quality quality);
++    static CamcorderProfile *createDefaultCamcorderFrontTimeLapseQcifProfile(camcorder_quality quality);
++    static CamcorderProfile *createDefaultCamcorderFrontTimeLapse480pProfile(camcorder_quality quality);
++    static void createDefaultCamcorderFrontLowProfiles(
++            MediaProfiles::CamcorderProfile **lowProfile,
++            MediaProfiles::CamcorderProfile **lowSpecificProfile);
++    static void createDefaultCamcorderFrontHighProfiles(
++            MediaProfiles::CamcorderProfile **highProfile,
++            MediaProfiles::CamcorderProfile **highSpecificProfile);
++    static void createDefaultCamcorderFrontTimeLapseLowProfiles(
++            MediaProfiles::CamcorderProfile **lowTimeLapseProfile,
++            MediaProfiles::CamcorderProfile **lowSpecificTimeLapseProfile);
++    static void createDefaultCamcorderFrontTimeLapseHighProfiles(
++            MediaProfiles::CamcorderProfile **highTimeLapseProfile,
++            MediaProfiles::CamcorderProfile **highSpecificTimeLapseProfile);
++#endif
+     static void createDefaultCamcorderProfiles(MediaProfiles *profiles);
+     static void createDefaultVideoEncoders(MediaProfiles *profiles);
+     static void createDefaultAudioEncoders(MediaProfiles *profiles);
+@@ -489,6 +556,9 @@ private:
+ 
+     static VideoEncoderCap* createDefaultH263VideoEncoderCap();
+     static VideoEncoderCap* createDefaultM4vVideoEncoderCap();
++#ifdef MTK_HARDWARE
++    static VideoEncoderCap* createDefaultH264VideoEncoderCap();
++#endif
+     static AudioEncoderCap* createDefaultAmrNBEncoderCap();
+     static AudioEncoderCap* createDefaultAacEncoderCap();
+     static AudioEncoderCap* createDefaultLpcmEncoderCap();
+diff --git a/media/libmedia/MediaProfiles.cpp b/media/libmedia/MediaProfiles.cpp
+index 5648a7de7..53e5a4e1f 100755
+--- a/media/libmedia/MediaProfiles.cpp
++++ b/media/libmedia/MediaProfiles.cpp
+@@ -28,6 +28,16 @@
+ #include <media/stagefright/foundation/ADebug.h>
+ #include <OMX_Video.h>
+ #include <OMX_VideoExt.h>
++#ifdef MTK_HARDWARE
++#include "venc_drv_if.h"
++#include "val_types.h"
++
++#include <fcntl.h>
++#include <sys/ioctl.h>
++//for devinfo
++#define DEV_IOC_MAGIC       'd'
++#define READ_DEV_DATA       _IOR(DEV_IOC_MAGIC,  1, unsigned int)
++#endif
+ 
+ namespace android {
+ 
+@@ -696,24 +706,56 @@ MediaProfiles::getInstance()
+     return sInstance;
+ }
+ 
++#ifdef MTK_HARDWARE
++static int getVideoCapability(int i4VideoFormat,unsigned int *pu4Width, unsigned int *pu4Height, unsigned int *pu4BitRatem, unsigned int *pu4FrameRate);
++#endif
++
+ /*static*/ MediaProfiles::VideoEncoderCap*
+ MediaProfiles::createDefaultH263VideoEncoderCap()
+ {
+     return new MediaProfiles::VideoEncoderCap(
++#ifdef MTK_HARDWARE
++        VIDEO_ENCODER_H263, 375*1000, 10000*1000, 176, 704, 144, 576, 15, 30, 0, 0, 0);
++#else
+         VIDEO_ENCODER_H263, 192000, 420000, 176, 352, 144, 288, 1, 20, 0, 0, 0);
++#endif
+ }
+ 
+ /*static*/ MediaProfiles::VideoEncoderCap*
+ MediaProfiles::createDefaultM4vVideoEncoderCap()
+ {
++#ifdef MTK_HARDWARE
++    unsigned int u4Width, u4Height, u4FrameRate, u4BitRate;
++    if(getVideoCapability(VIDEO_ENCODER_MPEG_4_SP, &u4Width, &u4Height, &u4BitRate, &u4FrameRate ) > 0){
++        ALOGD("[ %s ], support maxwidth=%d,maxheight=%d, bitrate %d, framerate %d",__FUNCTION__,u4Width,u4Height, u4BitRate, u4FrameRate);
++    return new MediaProfiles::VideoEncoderCap(
++        VIDEO_ENCODER_MPEG_4_SP, 75*1000, u4BitRate, 96, u4Width, 96, u4Height, 15, 30, 0, 0, 0);
++    }
++    else{
++        return new MediaProfiles::VideoEncoderCap(
++            VIDEO_ENCODER_MPEG_4_SP, 75*1000, 12500*1000, 96, 1280, 96, 720, 15, 30, 0, 0 ,0);
++    }
++#else
+     return new MediaProfiles::VideoEncoderCap(
+         VIDEO_ENCODER_MPEG_4_SP, 192000, 420000, 176, 352, 144, 288, 1, 20, 0, 0, 0);
++#endif
+ }
+ 
++#ifdef MTK_HARDWARE
++/*static*/ MediaProfiles::VideoEncoderCap*
++MediaProfiles::createDefaultH264VideoEncoderCap()
++{
++    return new MediaProfiles::VideoEncoderCap(
++        VIDEO_ENCODER_H264, 75000, 9000*1000, 96, 1280, 96, 720, 15, 30, 0, 0, 0);
++}
++#endif
+ 
+ /*static*/ void
+ MediaProfiles::createDefaultVideoEncoders(MediaProfiles *profiles)
+ {
++#ifdef MTK_HARDWARE
++   profiles->mVideoEncoders.add(createDefaultH264VideoEncoderCap());
++#endif
+     profiles->mVideoEncoders.add(createDefaultH263VideoEncoderCap());
+     profiles->mVideoEncoders.add(createDefaultM4vVideoEncoderCap());
+ }
+@@ -739,8 +781,12 @@ MediaProfiles::createDefaultCamcorderTimeLapseQcifProfile(camcorder_quality qual
+ MediaProfiles::createDefaultCamcorderTimeLapse480pProfile(camcorder_quality quality)
+ {
+     MediaProfiles::VideoCodec *videoCodec =
++#ifdef MTK_HARDWARE
++        new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 6000*1000, 640, 480, 20);//for front cam not support 720x480 in BSP case
++#else
+         new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 20000000, 720, 480, 20);
+ 
++#endif
+     AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
+     CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
+     profile->mCameraId = 0;
+@@ -816,10 +862,317 @@ MediaProfiles::createDefaultCamcorderLowProfiles(
+ MediaProfiles::createDefaultCamcorderHighProfiles(
+         MediaProfiles::CamcorderProfile **highProfile,
+         MediaProfiles::CamcorderProfile **highSpecificProfile) {
++#ifdef MTK_HARDWARE
++    *highProfile = createMTKCamcorderProfile(CAMCORDER_QUALITY_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    *highSpecificProfile = createMTKCamcorderProfile(CAMCORDER_QUALITY_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++#else
+     *highProfile = createDefaultCamcorderCifProfile(CAMCORDER_QUALITY_HIGH);
+     *highSpecificProfile = createDefaultCamcorderCifProfile(CAMCORDER_QUALITY_CIF);
++#endif
++}
++
++#ifdef MTK_HARDWARE
++/*static*/ MediaProfiles::CamcorderProfile*
++MediaProfiles::createDefaultCamcorderFrontQcifProfile(camcorder_quality quality)
++{
++	MediaProfiles::VideoCodec *videoCodec =
++		//new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, 192000, 176, 144, 20);
++		new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 192000, 176, 144, 20);
++
++    MediaProfiles::AudioCodec *audioCodec =
++        new MediaProfiles::AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
++
++    MediaProfiles::CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
++    profile->mCameraId = 1;
++    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
++    profile->mQuality = quality;
++    profile->mDuration = 30;
++    profile->mVideoCodec = videoCodec;
++    profile->mAudioCodec = audioCodec;
++    return profile;
++}
++
++/*static*/ MediaProfiles::CamcorderProfile*
++MediaProfiles::createDefaultCamcorderFrontCifProfile(camcorder_quality quality)
++{
++    MediaProfiles::VideoCodec *videoCodec =
++        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 360000, 352, 288, 20);
++
++    AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
++    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
++    profile->mCameraId = 1;
++    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
++    profile->mQuality = quality;
++    profile->mDuration = 60;
++    profile->mVideoCodec = videoCodec;
++    profile->mAudioCodec = audioCodec;
++    return profile;
++}
++
++/*static*/ MediaProfiles::CamcorderProfile*
++MediaProfiles::createDefaultCamcorderFrontTimeLapseQcifProfile(camcorder_quality quality)
++{
++    MediaProfiles::VideoCodec *videoCodec =
++        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 1000000, 176, 144, 20);
++
++    AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
++    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
++    profile->mCameraId = 1;
++    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
++    profile->mQuality = quality;
++    profile->mDuration = 60;
++    profile->mVideoCodec = videoCodec;
++    profile->mAudioCodec = audioCodec;
++    return profile;
++}
++
++/*static*/ MediaProfiles::CamcorderProfile*
++MediaProfiles::createDefaultCamcorderFrontTimeLapse480pProfile(camcorder_quality quality)
++{
++    MediaProfiles::VideoCodec *videoCodec =
++        new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 6000*1000, 640, 480, 20);//for front cam not support 720x480 in BSP case
++
++    AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
++    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
++    profile->mCameraId = 1;
++    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
++    profile->mQuality = quality;
++    profile->mDuration = 30;
++    profile->mVideoCodec = videoCodec;
++    profile->mAudioCodec = audioCodec;
++    return profile;
++}
++
++/*static*/ void
++MediaProfiles::createDefaultCamcorderFrontLowProfiles(
++        MediaProfiles::CamcorderProfile **lowProfile,
++        MediaProfiles::CamcorderProfile **lowSpecificProfile) {
++    *lowProfile = createDefaultCamcorderFrontQcifProfile(CAMCORDER_QUALITY_LOW);
++    *lowSpecificProfile = createDefaultCamcorderFrontQcifProfile(CAMCORDER_QUALITY_QCIF);
++}
++
++/*static*/ void
++MediaProfiles::createDefaultCamcorderFrontHighProfiles(
++        MediaProfiles::CamcorderProfile **highProfile,
++        MediaProfiles::CamcorderProfile **highSpecificProfile) {
++    *highProfile = createMTKCamcorderProfile(CAMCORDER_QUALITY_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++    *highSpecificProfile = createMTKCamcorderProfile(CAMCORDER_QUALITY_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++}
++/*static*/ void
++MediaProfiles::createDefaultCamcorderFrontTimeLapseLowProfiles(
++        MediaProfiles::CamcorderProfile **lowTimeLapseProfile,
++        MediaProfiles::CamcorderProfile **lowSpecificTimeLapseProfile) {
++    *lowTimeLapseProfile = createDefaultCamcorderFrontTimeLapseQcifProfile(CAMCORDER_QUALITY_TIME_LAPSE_LOW);
++    *lowSpecificTimeLapseProfile = createDefaultCamcorderFrontTimeLapseQcifProfile(CAMCORDER_QUALITY_TIME_LAPSE_QCIF);
+ }
+ 
++/*static*/ void
++MediaProfiles::createDefaultCamcorderFrontTimeLapseHighProfiles(
++        MediaProfiles::CamcorderProfile **highTimeLapseProfile,
++        MediaProfiles::CamcorderProfile **highSpecificTimeLapseProfile) {
++    *highTimeLapseProfile = createDefaultCamcorderFrontTimeLapse480pProfile(CAMCORDER_QUALITY_TIME_LAPSE_HIGH);
++    *highSpecificTimeLapseProfile = createDefaultCamcorderFrontTimeLapse480pProfile(CAMCORDER_QUALITY_TIME_LAPSE_480P);
++}
++
++static int getVideoCapability(int i4VideoFormat,unsigned int *pu4Width, unsigned int *pu4Height, unsigned int *pu4BitRatem, unsigned int *pu4FrameRate)
++{
++    int i4RetValue = 1;
++    VENC_DRV_QUERY_VIDEO_FORMAT_T qinfo;
++    VENC_DRV_QUERY_VIDEO_FORMAT_T outinfo;
++    VENC_DRV_MRESULT_T ret;
++
++    if((NULL == pu4Width) || (NULL == pu4Height) || (NULL == pu4BitRatem) || (NULL == pu4FrameRate)){
++        return -1;
++    }
++
++    memset(&qinfo,0,sizeof(VENC_DRV_QUERY_VIDEO_FORMAT_T));
++    memset(&outinfo,0,sizeof(VENC_DRV_QUERY_VIDEO_FORMAT_T));
++    switch (i4VideoFormat)
++    {
++        /*
++        case VIDEO_ENCODER_H263 :
++            qinfo.eVideoFormat = VENC_DRV_VIDEO_FORMAT_H263;
++        break;*/
++
++        case VIDEO_ENCODER_H264 :
++            qinfo.eVideoFormat = VENC_DRV_VIDEO_FORMAT_H264;
++            ret = eVEncDrvQueryCapability(VENC_DRV_QUERY_TYPE_VIDEO_FORMAT, &qinfo, &outinfo);
++            if(ret ==  VENC_DRV_MRESULT_OK){
++                (*pu4Width)= outinfo.u4Width;
++                (*pu4Height) = outinfo.u4Height;
++                (*pu4BitRatem) = outinfo.u4Bitrate;
++                (*pu4FrameRate) = outinfo.u4FrameRate;
++                ALOGI("checkVideoCapability, format=%d,support maxwidth=%d,maxheight=%d, bitrate %d, framerate %d",i4VideoFormat,outinfo.u4Width,outinfo.u4Height, outinfo.u4Bitrate, outinfo.u4FrameRate);
++            }
++            else{
++                i4RetValue = -1;
++            }
++        break;
++        case VIDEO_ENCODER_MPEG_4_SP :
++            qinfo.eVideoFormat = VENC_DRV_VIDEO_FORMAT_MPEG4;
++            ret = eVEncDrvQueryCapability(VENC_DRV_QUERY_TYPE_VIDEO_FORMAT, &qinfo, &outinfo);
++            if(ret ==  VENC_DRV_MRESULT_OK){
++                (*pu4Width)= outinfo.u4Width;
++                (*pu4Height) = outinfo.u4Height;
++                (*pu4BitRatem) = outinfo.u4Bitrate;
++                (*pu4FrameRate) = outinfo.u4FrameRate;
++                ALOGI("checkVideoCapability, format=%d,support maxwidth=%d,maxheight=%d, bitrate %d, framerate %d",i4VideoFormat,outinfo.u4Width,outinfo.u4Height, outinfo.u4Bitrate, outinfo.u4FrameRate);
++            }
++            else{
++                i4RetValue = -1;
++            }
++        break;
++        default:
++            i4RetValue = -1;
++            break;
++    }
++     return i4RetValue;
++}
++
++/*static*/ MediaProfiles::CamcorderProfile*
++MediaProfiles::createMTKCamcorderProfile(camcorder_quality quality, camcorder_mode CamMode, camera_id CamId)
++{
++    MediaProfiles::VideoCodec *videoCodec = NULL;
++    MediaProfiles::AudioCodec *audioCodec = NULL;
++    int64_t memory_size_byte = (int64_t)sysconf(_SC_PHYS_PAGES) * PAGE_SIZE;
++    unsigned int u4Width, u4Height, u4FrameRate, u4BitRate;
++	unsigned int MEMORY_SIZE_IS_LARGE = 0;
++	if (memory_size_byte > 256*1024*1024)
++		MEMORY_SIZE_IS_LARGE = 1;
++	else
++		MEMORY_SIZE_IS_LARGE = 1;
++
++	// Setting for VIDEO Profile
++	switch(quality)
++	{
++		case CAMCORDER_QUALITY_MTK_LOW:
++		case CAMCORDER_QUALITY_MTK_NIGHT_LOW:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW:
++						if (CamId == BACK_CAMERA){
++							videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, 750*1000/CamMode, 176, 144, 30/CamMode);
++						}
++						else{
++							videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 150*1000/CamMode, 176, 144, 30/CamMode);
++						}
++			break;
++		case CAMCORDER_QUALITY_MTK_MEDIUM:
++		case CAMCORDER_QUALITY_MTK_NIGHT_MEDIUM:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_MEDIUM:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_MEDIUM:
++#ifdef MTK_CAMCORDER_PROFILE_MID_MP4
++			if (CamId == BACK_CAMERA){
++				videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 4000*1000/CamMode, 480, 320, 30/CamMode);
++			}
++			else{
++				videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 2000*1000/CamMode, 480, 320, 30/CamMode);
++			 }
++#else
++				videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, (CamMode == CAMCORDER_DAY_MODE) ? 3000*1000 : 1250*1000, 640, 480, 30/CamMode);
++#endif
++			break;
++		case CAMCORDER_QUALITY_MTK_HIGH:
++		case CAMCORDER_QUALITY_MTK_NIGHT_HIGH:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH:
++						if (CamId == BACK_CAMERA){
++							videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, 9000*1000/CamMode, 1280, 720, 30/CamMode);
++						}
++						else{
++							videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 4200*1000/CamMode, 640, 480, 30/CamMode);
++						}
++			break;
++		case CAMCORDER_QUALITY_480P:   // just for CTS
++		case CAMCORDER_QUALITY_HIGH:   // just for CTS
++                        if (CamId == BACK_CAMERA){
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 6000*1000/CamMode, 640, 480, 30/CamMode);
++                        }
++                        else{
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 4200*1000/CamMode, 640, 480, 30/CamMode);
++                        }
++			break;
++		case CAMCORDER_QUALITY_MTK_FINE:
++		case CAMCORDER_QUALITY_MTK_NIGHT_FINE:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_FINE:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_FINE:
++							if(getVideoCapability(VIDEO_ENCODER_MPEG_4_SP, &u4Width, &u4Height, &u4BitRate, &u4FrameRate ) > 0){
++								if((u4Width >= 1920) && (u4Height >= 1088)){
++									videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 26000*1000/CamMode, 1920, 1088, 30/CamMode);
++								}
++								else{
++									videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, (u4BitRate)/CamMode, u4Width, u4Height, u4FrameRate/CamMode);
++								}
++							}
++							else
++							{
++								ALOGD("[%s] Cannot get video capability use default",__FUNCTION__);
++								videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 26000*1000/CamMode, 1920, 1088, 30/CamMode);
++							}
++			break;
++		case CAMCORDER_QUALITY_MTK_LIVE_EFFECT:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT:
++                        if (CamId == BACK_CAMERA){
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 2500*1000/CamMode, 480, 320, 30/CamMode);
++                        }
++                        else{
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 2500*1000/CamMode, 480, 320, 30/CamMode);
++                        }
++                        break;
++		case CAMCORDER_QUALITY_MTK_H264_HIGH:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_H264_HIGH:
++                        if (CamId == BACK_CAMERA){
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, 4000*1000/CamMode, 640, 480, 30/CamMode);
++                        }
++                        else{
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_H264, 4000*1000/CamMode, 640, 480, 30/CamMode);
++                        }
++                        break;
++		case CAMCORDER_QUALITY_MTK_MPEG4_1080P:
++		case CAMCORDER_QUALITY_MTK_TIME_LAPSE_MPEG4_1080P:
++                        if (CamId == BACK_CAMERA){
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 14000*1000/CamMode, 1920, 1088, 15/CamMode);
++                        }
++                        else{
++                            videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 14000*1000/CamMode, 1920, 1088, 15/CamMode);
++                        }
++                        break;
++		default:
++			videoCodec = new MediaProfiles::VideoCodec(VIDEO_ENCODER_MPEG_4_SP, 75*1000/CamMode, 96, 96, 30/CamMode);
++			ALOGE("The given quality %d is not found", quality);
++			break;
++	}
++
++    // Setting for AUDIO Profile
++	switch(quality)
++	{
++        case CAMCORDER_QUALITY_MTK_LOW:
++        case CAMCORDER_QUALITY_MTK_NIGHT_LOW:
++        case CAMCORDER_QUALITY_TIME_LAPSE_LOW:
++        case CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW:
++        case CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW:
++            audioCodec = new AudioCodec(AUDIO_ENCODER_AAC, 64000, 48000, 2);
++            break;
++
++        //Fine quality AAC HE
++        case CAMCORDER_QUALITY_MTK_FINE:
++                    audioCodec = new AudioCodec(AUDIO_ENCODER_AAC, 128000, 48000, 2);
++            break;
++
++        default:
++            audioCodec = new AudioCodec(AUDIO_ENCODER_AAC, 128000, 48000, 2);
++            break;
++	}
++
++    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
++    profile->mCameraId = CamId;
++    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
++    profile->mQuality = quality;
++    profile->mDuration = 30;
++    profile->mVideoCodec = videoCodec;
++    profile->mAudioCodec = audioCodec;
++    return profile;
++}
++#endif
+ /*static*/ void
+ MediaProfiles::createDefaultCamcorderProfiles(MediaProfiles *profiles)
+ {
+@@ -847,10 +1200,305 @@ MediaProfiles::createDefaultCamcorderProfiles(MediaProfiles *profiles)
+     profiles->mCamcorderProfiles.add(highTimeLapseProfile);
+     profiles->mCamcorderProfiles.add(highSpecificTimeLapseProfile);
+ 
++#ifdef MTK_HARDWARE
++
++    // low camcorder profiles.
++    MediaProfiles::CamcorderProfile *frontlowProfile, *frontlowSpecificProfile;
++    createDefaultCamcorderFrontLowProfiles(&frontlowProfile, &frontlowSpecificProfile);
++    profiles->mCamcorderProfiles.add(frontlowProfile);
++    profiles->mCamcorderProfiles.add(frontlowSpecificProfile);
++
++    // high camcorder profiles.
++    MediaProfiles::CamcorderProfile* fronthighProfile, *fronthighSpecificProfile;
++    createDefaultCamcorderFrontHighProfiles(&fronthighProfile, &fronthighSpecificProfile);
++    profiles->mCamcorderProfiles.add(fronthighProfile);
++    profiles->mCamcorderProfiles.add(fronthighSpecificProfile);
++
++    // low camcorder time lapse profiles.
++    MediaProfiles::CamcorderProfile *frontlowTimeLapseProfile, *frontlowSpecificTimeLapseProfile;
++    createDefaultCamcorderFrontTimeLapseLowProfiles(&frontlowTimeLapseProfile, &frontlowSpecificTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(frontlowTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(frontlowSpecificTimeLapseProfile);
++
++    // high camcorder time lapse profiles.
++    MediaProfiles::CamcorderProfile *fronthighTimeLapseProfile, *fronthighSpecificTimeLapseProfile;
++    createDefaultCamcorderFrontTimeLapseHighProfiles(&fronthighTimeLapseProfile, &fronthighSpecificTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(fronthighTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(fronthighSpecificTimeLapseProfile);
++
++
++    // mtk low camcorder profiles.
++    MediaProfiles::CamcorderProfile *LowProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LOW, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *LowSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LOW, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    profiles->mCamcorderProfiles.add(LowProfile);
++    profiles->mCamcorderProfiles.add(LowSpecificProfile);
++
++	// mtk medium camcorder profiles.
++	MediaProfiles::CamcorderProfile *MediumProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_MEDIUM, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *MediumSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_MEDIUM, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(MediumProfile);
++	profiles->mCamcorderProfiles.add(MediumSpecificProfile);
++
++    // mtk high camcorder profiles.
++    MediaProfiles::CamcorderProfile *HighProfile =
++            createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *HighSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    profiles->mCamcorderProfiles.add(HighProfile);
++    profiles->mCamcorderProfiles.add(HighSpecificProfile);
++
++    // 480p camcorder profiles.
++    MediaProfiles::CamcorderProfile *Back480pProfile =
++            createMTKCamcorderProfile(CAMCORDER_QUALITY_480P, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *Back480pSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_480P, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    profiles->mCamcorderProfiles.add(Back480pProfile);
++    profiles->mCamcorderProfiles.add(Back480pSpecificProfile);
++
++    // mtk fine camcorder profiles.
++    MediaProfiles::CamcorderProfile *FineProfile =
++            createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_FINE, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *FineSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_FINE, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    profiles->mCamcorderProfiles.add(FineProfile);
++    profiles->mCamcorderProfiles.add(FineSpecificProfile);
++
++    // mtk h264 high camcorder profiles.
++    //MediaProfiles::CamcorderProfile *H264HighProfile =
++            //createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_H264_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	//MediaProfiles::CamcorderProfile *H264HighSpecificProfile =
++		    //createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_H264_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    //profiles->mCamcorderProfiles.add(H264HighProfile);
++    //profiles->mCamcorderProfiles.add(H264HighSpecificProfile);
++
++	// front low camcorder profiles.
++	MediaProfiles::CamcorderProfile *FrontLowProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LOW, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontLowSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LOW, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontLowProfile);
++	profiles->mCamcorderProfiles.add(FrontLowSpecificProfile);
++
++	// front high camcorder profiles.
++	MediaProfiles::CamcorderProfile *FrontHighProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontHighSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontHighProfile);
++	profiles->mCamcorderProfiles.add(FrontHighSpecificProfile);
++
++    // front 480p camcorder profiles.
++	MediaProfiles::CamcorderProfile *Front480pProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_480P, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *Front480pSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_480P, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(Front480pProfile);
++	profiles->mCamcorderProfiles.add(Front480pSpecificProfile);
++
++	// night low camcorder profiles.
++	MediaProfiles::CamcorderProfile *NightLowProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_LOW, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightLowSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_LOW, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightLowProfile);
++	profiles->mCamcorderProfiles.add(NightLowSpecificProfile);
++
++	// night medium camcorder profiles.
++	MediaProfiles::CamcorderProfile *NightMediumProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_MEDIUM, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightMediumSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_MEDIUM, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightMediumProfile);
++	profiles->mCamcorderProfiles.add(NightMediumSpecificProfile);
++
++	// night high camcorder profiles.
++	MediaProfiles::CamcorderProfile *NightHighProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightHighSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightHighProfile);
++	profiles->mCamcorderProfiles.add(NightHighProfile);
++
++	// night fine camcorder profiles.
++	MediaProfiles::CamcorderProfile *NightFineProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_FINE, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightFineSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_FINE, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightFineProfile);
++	profiles->mCamcorderProfiles.add(NightFineProfile);
++
++
++	// front night low camcorder profiles.
++	MediaProfiles::CamcorderProfile *FrontNightLowProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_LOW, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontNightLowSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_LOW, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontNightLowProfile);
++	profiles->mCamcorderProfiles.add(FrontNightLowSpecificProfile);
++
++	// front night high camcorder profiles.
++	MediaProfiles::CamcorderProfile *FrontNightHighProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontNightHighSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontNightHighProfile);
++	profiles->mCamcorderProfiles.add(FrontNightHighSpecificProfile);
++
++// LIVE EFFECT Profiles
++// mtk live effect camcorder profiles.
++MediaProfiles::CamcorderProfile *LiveEffectProfile =
++        createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LIVE_EFFECT, CAMCORDER_DAY_MODE, BACK_CAMERA);
++MediaProfiles::CamcorderProfile *LiveEffectSpecificProfile =
++        createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LIVE_EFFECT, CAMCORDER_DAY_MODE, BACK_CAMERA);
++profiles->mCamcorderProfiles.add(LiveEffectProfile);
++profiles->mCamcorderProfiles.add(LiveEffectSpecificProfile);
++
++
++// front night high camcorder profiles.
++MediaProfiles::CamcorderProfile *LiveEffectFrontProfile =
++        createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LIVE_EFFECT, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++MediaProfiles::CamcorderProfile *LiveEffectFrontSpecificProfile =
++        createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_LIVE_EFFECT, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++profiles->mCamcorderProfiles.add(LiveEffectFrontProfile);
++profiles->mCamcorderProfiles.add(LiveEffectFrontSpecificProfile);
++
++
++// TIME LAPSE Profiles
++
++    // mtk low camcorder time lapse profiles.
++    MediaProfiles::CamcorderProfile *LowTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *LowTimeLapseSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW, CAMCORDER_DAY_MODE, BACK_CAMERA);
++    profiles->mCamcorderProfiles.add(LowTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(LowTimeLapseSpecificProfile);
++
++	// mtk medium camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *MediumTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_MEDIUM, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *MediumTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_MEDIUM, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(MediumTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(MediumTimeLapseSpecificProfile);
++
++    // mtk high camcorder time lapse profiles.
++    MediaProfiles::CamcorderProfile *HighTimeLapseProfile =
++            createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *HighTimeLapseSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);;
++    profiles->mCamcorderProfiles.add(HighTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(HighTimeLapseSpecificProfile);
++
++    // mtk fine camcorder time lapse profiles.
++    MediaProfiles::CamcorderProfile *FineTimeLapseProfile =
++            createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_FINE, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *FineTimeLapseSpecificProfile =
++		    createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_FINE, CAMCORDER_DAY_MODE, BACK_CAMERA);;
++    profiles->mCamcorderProfiles.add(FineTimeLapseProfile);
++    profiles->mCamcorderProfiles.add(FineTimeLapseSpecificProfile);
++
++    // mtk h264 high camcorder time lapse profiles.
++    //MediaProfiles::CamcorderProfile *H264HighTimeLapseProfile =
++            //createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_H264_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	//MediaProfiles::CamcorderProfile *H264HighTimeLapseSpecificProfile =
++		    //createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_H264_HIGH, CAMCORDER_DAY_MODE, BACK_CAMERA);;
++    //profiles->mCamcorderProfiles.add(H264HighTimeLapseProfile);
++    //profiles->mCamcorderProfiles.add(H264HighTimeLapseSpecificProfile);
++
++	// front low camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *FrontLowTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontLowTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LOW, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontLowTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(FrontLowTimeLapseSpecificProfile);
++
++	// front high camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *FrontHighTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontHighTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_HIGH, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontHighTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(FrontHighTimeLapseSpecificProfile);
++
++	// night low camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *NightLowTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightLowTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightLowTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(NightLowTimeLapseSpecificProfile);
++
++	// night medium camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *NightMediumTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_MEDIUM, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightMediumTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_MEDIUM, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightMediumTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(NightMediumTimeLapseSpecificProfile);
++
++	// night high camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *NightHighTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightHighTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightHighTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(NightHighTimeLapseSpecificProfile);
++
++	// night fine camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *NightFineTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_FINE, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *NightFineTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_FINE, CAMCORDER_NIGHT_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(NightFineTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(NightFineTimeLapseSpecificProfile);
++
++        // live effect camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *LiveEffectTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	MediaProfiles::CamcorderProfile *LiveEffectTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT, CAMCORDER_DAY_MODE, BACK_CAMERA);
++	profiles->mCamcorderProfiles.add(LiveEffectTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(LiveEffectTimeLapseSpecificProfile);
++
++
++        // live effect camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *LiveEffectTimeLapseFrontProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *LiveEffectTimeLapseSpecificFrontProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_LIVE_EFFECT, CAMCORDER_DAY_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(LiveEffectTimeLapseFrontProfile);
++	profiles->mCamcorderProfiles.add(LiveEffectTimeLapseSpecificFrontProfile);
++
++
++	// front night low camcorder profiles.
++	MediaProfiles::CamcorderProfile *FrontNightLowTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontNightLowTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_LOW, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontNightLowTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(FrontNightLowTimeLapseSpecificProfile);
++
++	// front night high camcorder time lapse profiles.
++	MediaProfiles::CamcorderProfile *FrontNightHighTimeLapseProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	MediaProfiles::CamcorderProfile *FrontNightHighTimeLapseSpecificProfile =
++			createMTKCamcorderProfile(CAMCORDER_QUALITY_MTK_TIME_LAPSE_NIGHT_HIGH, CAMCORDER_NIGHT_MODE, FRONT_CAMERA);
++	profiles->mCamcorderProfiles.add(FrontNightHighTimeLapseProfile);
++	profiles->mCamcorderProfiles.add(FrontNightHighTimeLapseSpecificProfile);
++#endif
++
+     // For emulator and other legacy devices which does not have a
+     // media_profiles.xml file, We assume that the default camera id
+     // is 0 and that is the only camera available.
+     profiles->mCameraIds.push(0);
++#ifdef MTK_HARDWARE
++    profiles->mCameraIds.push(1);
++#endif
+ }
+ 
+ /*static*/ void
+@@ -916,6 +1564,15 @@ MediaProfiles::createDefaultImageEncodingQualityLevels(MediaProfiles *profiles)
+     levels->mLevels.add(80);
+     levels->mLevels.add(90);
+     profiles->mImageEncodingQualityLevels.add(levels);
++#ifdef MTK_HARDWARE
++    ALOGE("FrontCameraLevels Setting\n");
++    ImageEncodingQualityLevels *FrontCameraLevels = new ImageEncodingQualityLevels();
++    FrontCameraLevels->mCameraId = 1;
++    FrontCameraLevels->mLevels.add(70);
++    FrontCameraLevels->mLevels.add(80);
++    FrontCameraLevels->mLevels.add(90);
++    profiles->mImageEncodingQualityLevels.add(FrontCameraLevels);
++#endif
+ }
+ 
+ /*static*/ void
+@@ -1161,6 +1818,33 @@ Vector<audio_decoder> MediaProfiles::getAudioDecoders() const
+     }
+     return decoders;  // copy out
+ }
++#ifdef MTK_HARDWARE
++size_t  MediaProfiles::getCamcorderProfilesNum(int id)
++{
++	return mCamcorderProfiles.size();
++}
++
++String8  MediaProfiles::getCamcorderProfilesCaps(int id)
++{
++	char buff[256];
++	memset(buff,0,256);
++
++	for (size_t i = 0; i < mCamcorderProfiles.size();  ++i)
++	{
++        if (id == mCamcorderProfiles[i]->mCameraId)
++        {
++            char temp[10];
++            memset(temp,0,10);
++	   	    sprintf(temp,"%d,",mCamcorderProfiles[i]->mQuality);
++            strcat(buff,temp);
++        }
++	}
++
++    ALOGD("[getCamcorderProfilesCaps] mCameraId = %d, buff = %s", id, buff);
++
++    return String8(buff);
++}
++#endif
+ 
+ int MediaProfiles::getCamcorderProfileIndex(int cameraId, camcorder_quality quality) const
+ {
+-- 
+2.15.1
+

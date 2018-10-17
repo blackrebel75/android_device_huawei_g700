@@ -1,0 +1,22 @@
+From e6a18c52ff903c76340f0f2ca8ca3b419cf5b0de Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Sun, 3 Jan 2016 19:41:54 +0100
+Subject: [PATCH 7/8] Fix mistake
+
+---
+ .../src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java  | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+index fff4652758d..aaefb0f9261 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/PhoneStatusBarPolicy.java
+@@ -1,4 +1,4 @@
+-﻿/*
++/*
+  * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+  * Not a Contribution.
+  *
+-- 
+2.15.1
+

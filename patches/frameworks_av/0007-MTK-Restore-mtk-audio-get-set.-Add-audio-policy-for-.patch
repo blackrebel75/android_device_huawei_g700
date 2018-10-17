@@ -1,0 +1,1572 @@
+From 8327775c8059b3f9b39520e9b8fae33650a090e1 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:24:45 +0200
+Subject: [PATCH 07/18] [MTK] Restore mtk audio get/set. Add audio policy for
+ mtk. Add audio mtk resampler (fix audio recorder).
+
+---
+ include/media/AudioSystem.h                        |  29 ---
+ include/media/IAudioFlinger.h                      |   9 -
+ include/media/IAudioPolicyService.h                |   5 -
+ media/libmedia/AudioSystem.cpp                     |  58 -----
+ media/libmedia/IAudioFlinger.cpp                   |  67 -----
+ media/libmedia/IAudioPolicyService.cpp             |  17 --
+ services/audioflinger/Android.mk                   |  14 ++
+ services/audioflinger/AudioFlinger.cpp             |  63 ++---
+ services/audioflinger/AudioFlinger.h               |  16 +-
+ services/audioflinger/AudioResampler.cpp           | 221 +++++++++++++++-
+ services/audioflinger/AudioResampler.h             |  15 ++
+ services/audioflinger/AudioResamplerCubic.cpp      |   7 +
+ services/audioflinger/AudioResamplerCubic.h        |  10 +
+ services/audioflinger/AudioResamplerDyn.cpp        |  19 ++
+ services/audioflinger/AudioResamplerDyn.h          |   3 +
+ services/audioflinger/AudioResamplerSinc.cpp       |  47 ++++
+ services/audioflinger/AudioResamplerSinc.h         |   8 +
+ services/audioflinger/AudioResamplermtk.cpp        | 277 +++++++++++++++++++++
+ services/audioflinger/AudioResamplermtk.h          | 107 ++++++++
+ services/audioflinger/Threads.cpp                  |  20 ++
+ .../audiopolicy/AudioPolicyInterfaceImplLegacy.cpp |  13 +-
+ services/audiopolicy/AudioPolicyService.cpp        |  12 -
+ services/audiopolicy/AudioPolicyService.h          |   3 -
+ 23 files changed, 783 insertions(+), 257 deletions(-)
+ create mode 100644 services/audioflinger/AudioResamplermtk.cpp
+ create mode 100644 services/audioflinger/AudioResamplermtk.h
+
+diff --git a/include/media/AudioSystem.h b/include/media/AudioSystem.h
+index d06f1249c..698bf2eec 100644
+--- a/include/media/AudioSystem.h
++++ b/include/media/AudioSystem.h
+@@ -43,35 +43,6 @@ public:
+     /* These are static methods to control the system-wide AudioFlinger
+      * only privileged processes can have access to them
+      */
+-#ifdef MTK_HARDWARE
+-    static int xWayPlay_Start(int sample_rate);
+-    static int xWayPlay_Stop(void);
+-    static int xWayPlay_Write(void *buffer, int size_bytes);
+-    static int xWayPlay_GetFreeBufferCount(void);
+-    static int xWayRec_Start(int sample_rate);
+-    static int xWayRec_Stop(void);
+-    static int xWayRec_Read(void *buffer, int size_bytes);
+-
+-    //add by wendy
+-    static int ReadRefFromRing(void*buf, uint32_t datasz,void* DLtime);
+-    static int GetVoiceUnlockULTime(void* DLtime);
+-    static int SetVoiceUnlockSRC(uint outSR, uint outChannel);
+-    static bool startVoiceUnlockDL();
+-    static bool stopVoiceUnlockDL();
+-    static void freeVoiceUnlockDLInstance();
+-    static bool getVoiceUnlockDLInstance();
+-    static int GetVoiceUnlockDLLatency();
+-
+-    //add . for AM mode set/get  parameters
+-    static status_t GetEMParameter(void *ptr,size_t len);
+-    static status_t SetEMParameter(void *ptr,size_t len);
+-    static status_t SetAudioCommand(int par1,int par2);
+-    static status_t GetAudioCommand(int par1, int *par2);
+-    static status_t SetAudioData(int par1,size_t len, void *ptr);
+-    static status_t GetAudioData(int par1,size_t len,void *ptr);
+-    static status_t SetACFPreviewParameter(void *ptr,size_t len);
+-    static status_t SetHCFPreviewParameter(void *ptr,size_t len);
+-#endif
+ 
+     // mute/unmute microphone
+     static status_t muteMicrophone(bool state);
+diff --git a/include/media/IAudioFlinger.h b/include/media/IAudioFlinger.h
+index 9b799f329..54be5f38d 100644
+--- a/include/media/IAudioFlinger.h
++++ b/include/media/IAudioFlinger.h
+@@ -258,15 +258,6 @@ public:
+ 
+     /* Get the HW synchronization source used for an audio session */
+     virtual audio_hw_sync_t getAudioHwSyncForSession(audio_session_t sessionId) = 0;
+-
+-#ifdef MTK_HARDWARE
+-	// Interfaces mtk added 
+-    virtual status_t SetAudioCommand(int parameters1, int parameter2) = 0;
+-    virtual status_t GetAudioCommand(int parameters1) = 0;
+-    virtual status_t SetAudioData(int par1,size_t len,void *ptr)=0;
+-    virtual status_t GetAudioData(int par1,size_t len,void *ptr)=0;
+-
+-#endif
+ };
+ 
+ 
+diff --git a/include/media/IAudioPolicyService.h b/include/media/IAudioPolicyService.h
+index db8b9e9f5..134dd197a 100644
+--- a/include/media/IAudioPolicyService.h
++++ b/include/media/IAudioPolicyService.h
+@@ -153,11 +153,6 @@ public:
+     virtual audio_mode_t getPhoneState() = 0;
+ 
+     virtual status_t registerPolicyMixes(Vector<AudioMix> mixes, bool registration) = 0;
+-
+-#ifdef MTK_HARDWARE
+-    virtual status_t SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4) = 0;
+-#endif
+-
+ };
+ 
+ 
+diff --git a/media/libmedia/AudioSystem.cpp b/media/libmedia/AudioSystem.cpp
+index 005547cd3..9cae21c68 100644
+--- a/media/libmedia/AudioSystem.cpp
++++ b/media/libmedia/AudioSystem.cpp
+@@ -999,62 +999,4 @@ void AudioSystem::AudioPolicyServiceClient::onAudioPatchListUpdate()
+     }
+ }
+ 
+-#ifdef MTK_HARDWARE
+-status_t AudioSystem::SetAudioCommand(int par1,int par2)
+-{
+-    ALOGD("AudioSystem::SetAudioCommand");
+-    const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+-    if (af == 0)
+-    {
+-        ALOGE("AudioSystem::SetAudioCommand Error!! PERMISSION_DENIED");
+-        return PERMISSION_DENIED;
+-    }
+-    return af->SetAudioCommand(par1,par2);
+-
+-    return OK;   
+-}
+-
+-status_t AudioSystem::GetAudioCommand(int par1,int* par2)
+-{  
+-    ALOGD("AudioSystem::GetAudioCommand");
+-    const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+-    if (af == 0)
+-    {
+-        ALOGE("AudioSystem::GetAudioCommand Error!! PERMISSION_DENIED");
+-        return PERMISSION_DENIED;
+-    }  
+-    *par2 =  af->GetAudioCommand(par1);
+-    return NO_ERROR;
+-}
+-
+-status_t AudioSystem::SetAudioData(int par1,size_t byte_len,void *ptr)
+-{
+-
+-    ALOGD("SetAudioData");
+-    const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+-    if (af == 0)
+-    {
+-        ALOGE("AudioSystem::SetAAudioData Error!! PERMISSION_DENIED");
+-        return PERMISSION_DENIED;
+-    }
+-    return af->SetAudioData(par1,byte_len,ptr);
+-
+-    return OK;  
+-}
+-
+-status_t AudioSystem::GetAudioData(int par1,size_t byte_len,void *ptr)
+-{
+-
+-    ALOGD("GetAudioData");
+-    const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+-    if (af == 0)
+-    {
+-        ALOGE("AudioSystem::GetAAudioData Error!! PERMISSION_DENIED");
+-        return PERMISSION_DENIED;
+-    }   
+-    return af->GetAudioData(par1,byte_len,ptr);
+-
+-    return OK;  
+-}
+-#endif
+ }; // namespace android
+diff --git a/media/libmedia/IAudioFlinger.cpp b/media/libmedia/IAudioFlinger.cpp
+index 980208976..3f76506a2 100644
+--- a/media/libmedia/IAudioFlinger.cpp
++++ b/media/libmedia/IAudioFlinger.cpp
+@@ -85,31 +85,6 @@ enum {
+ #ifdef QCOM_DIRECTTRACK
+     CREATE_DIRECT_TRACK,
+ #endif
+-#ifdef MTK_HARDWARE
+-	GET_EM_PARAMETER  = 0x7FFF0000,  //Don't call by CTS for security
+-	SET_EM_PARAMETER,
+-	SET_AUDIO_COMMAND,
+-	GET_AUDIO_COMMAND,
+-	SET_AUDIO_DATA,
+-	GET_AUDIO_DATA,
+-	SET_ACF_PREVIEW_PARAMETER,
+-	SET_HCF_PREVIEW_PARAMETER,
+-	PCM_PLAY_START,
+-	PCM_PLAY_STOP,
+-	PCM_PLAY_WEITE,
+-	PCM_PLAY_GET_FREE_BUFFER_SIZE,
+-	PCM_RECORD_START,
+-	PCM_RECORD_STOP,
+-	PCM_RECORD_READ,
+-	Read_Ref_FromRing,
+-	Get_Voice_Unlock_ULTime,
+-	Set_Voice_Unlock_SRC,
+-	start_Voice_Unlock_DL,
+-	stop_Voice_Unlock_DL,
+-	free_Voice_Unlock_DL_Instance,
+-	get_Voice_Unlock_DL_Instance,
+-	Get_Voice_Unlock_DL_Latency
+-#endif
+ };
+ 
+ #define MAX_ITEMS_PER_LIST 1024
+@@ -969,48 +944,6 @@ public:
+         }
+         return (audio_hw_sync_t)reply.readInt32();
+     }
+-
+-#ifdef MTK_HARDWARE
+-    virtual status_t SetAudioCommand(int var1,int var2)
+-    {
+-        Parcel data, reply;
+-        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
+-        data.writeInt32(var1);
+-        data.writeInt32(var2);
+-        remote()->transact(SET_AUDIO_COMMAND, data, &reply);
+-        return  reply.readInt32();
+-    }
+-    virtual status_t GetAudioCommand(int var1)
+-    {
+-        Parcel data, reply;
+-        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
+-        data.writeInt32(var1);
+-        remote()->transact(GET_AUDIO_COMMAND, data, &reply);
+-        return  reply.readInt32();
+-    }
+-    virtual status_t SetAudioData(int par1, size_t len,void *ptr)
+-    {
+-        Parcel data, reply;
+-        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
+-        data.writeInt32(par1);
+-        data.writeInt32(len);
+-        data.write(ptr,len);
+-        remote()->transact(SET_AUDIO_DATA, data, &reply);
+-        reply.read(ptr, len);
+-        return OK;
+-    }
+-    virtual status_t GetAudioData(int par1,size_t len,void *ptr)
+-    {
+-        Parcel data, reply;
+-        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
+-        data.writeInt32(par1);
+-        data.writeInt32(len);
+-        data.write(ptr,len);
+-        remote()->transact(GET_AUDIO_DATA, data, &reply);
+-        reply.read(ptr, len);
+-        return OK;
+-    }
+-#endif
+ };
+ 
+ IMPLEMENT_META_INTERFACE(AudioFlinger, "android.media.IAudioFlinger");
+diff --git a/media/libmedia/IAudioPolicyService.cpp b/media/libmedia/IAudioPolicyService.cpp
+index c523c2e5e..9d1ecd7ac 100644
+--- a/media/libmedia/IAudioPolicyService.cpp
++++ b/media/libmedia/IAudioPolicyService.cpp
+@@ -71,9 +71,6 @@ enum {
+     RELEASE_SOUNDTRIGGER_SESSION,
+     GET_PHONE_STATE,
+     REGISTER_POLICY_MIXES,
+-#ifdef MTK_HARDWARE
+-    SET_POLICYMANAGER_PARAMETERS
+-#endif
+ };
+ 
+ #define MAX_ITEMS_PER_LIST 1024
+@@ -495,20 +492,6 @@ public:
+         return status;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    virtual status_t SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4)
+-    {
+-        Parcel data, reply;
+-        data.writeInterfaceToken(IAudioPolicyService::getInterfaceDescriptor());
+-        data.writeInt32(par1);
+-        data.writeInt32(par2);
+-        data.writeInt32(par3);
+-        data.writeInt32(par4);
+-        remote()->transact(SET_POLICYMANAGER_PARAMETERS, data, &reply);
+-        return static_cast <status_t> (reply.readInt32());
+-    }
+-#endif
+-
+     virtual bool isOffloadSupported(const audio_offload_info_t& info)
+     {
+         Parcel data, reply;
+diff --git a/services/audioflinger/Android.mk b/services/audioflinger/Android.mk
+index e7a8340bb..460112384 100644
+--- a/services/audioflinger/Android.mk
++++ b/services/audioflinger/Android.mk
+@@ -94,8 +94,12 @@ endif
+ #QTI Resampler
+ 
+ ifeq ($(BOARD_HAS_MTK_HARDWARE),true)
++   LOCAL_SRC_FILES += \
++        AudioResamplermtk.cpp
++
+     LOCAL_SHARED_LIBRARIES += libblisrc
+ endif
++
+ LOCAL_MODULE:= libaudioflinger
+ LOCAL_32_BIT_ONLY := true
+ 
+@@ -112,6 +116,14 @@ else
+     LOCAL_CFLAGS += -DANDROID_SMP=0
+ endif
+ 
++ifeq ($(BOARD_HAVE_PRE_KITKAT_AUDIO_BLOB),true)
++    LOCAL_CFLAGS += -DHAVE_PRE_KITKAT_AUDIO_BLOB
++endif
++
++ifeq ($(BOARD_HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB),true)
++    LOCAL_CFLAGS += -DHAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
++endif
++
+ LOCAL_CFLAGS += -fvisibility=hidden
+ 
+ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_HDMI_PASSTHROUGH)),true)
+@@ -158,6 +170,8 @@ LOCAL_SHARED_LIBRARIES := \
+     liblog
+ 
+ ifeq ($(BOARD_HAS_MTK_HARDWARE),true)
++   LOCAL_SRC_FILES += \
++        AudioResamplermtk.cpp
+     LOCAL_SHARED_LIBRARIES += libblisrc
+ endif
+ 
+diff --git a/services/audioflinger/AudioFlinger.cpp b/services/audioflinger/AudioFlinger.cpp
+index a3c8c2538..772c3219b 100644
+--- a/services/audioflinger/AudioFlinger.cpp
++++ b/services/audioflinger/AudioFlinger.cpp
+@@ -176,53 +176,6 @@ const char *formatToString(audio_format_t format) {
+     return "unknown";
+ }
+ 
+-#ifdef MTK_HARDWARE
+-status_t AudioFlinger::SetAudioData(int par1,size_t len,void *ptr)
+-{
+-    ALOGV("SetAudioData par1 = %d,len = %d ",par1,len);
+-    AutoMutex lock(mHardwareLock);
+-    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
+-    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
+-    dev->SetAudioData(dev,par1,len,ptr);
+-    mHardwareStatus = AUDIO_HW_IDLE;
+-    return NO_ERROR;
+-}
+-
+-status_t AudioFlinger::GetAudioData(int par1,size_t len,void *ptr)
+-{
+-    ALOGV("GetAudioData par1 = %d,len = %d ",par1,len);
+-    AutoMutex lock(mHardwareLock);
+-    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
+-    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
+-    dev->GetAudioData(dev,par1,len,ptr);
+-    mHardwareStatus = AUDIO_HW_IDLE;
+-    return NO_ERROR;
+-}
+-
+-status_t AudioFlinger::SetAudioCommand(int parameters1,int parameters2)
+-{
+-    ALOGV("SetAudioCommand par1 = %d,par2 = %d ",parameters1,parameters2);
+-    AutoMutex lock(mHardwareLock);
+-    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
+-    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
+-    dev->SetAudioCommand(dev,parameters1,parameters2);
+-    mHardwareStatus = AUDIO_HW_IDLE;
+-    return NO_ERROR;
+-}
+-
+-status_t AudioFlinger::GetAudioCommand(int parameters1)
+-{
+-    ALOGV("GetAudioCommand par1 = %d",parameters1);
+-    int value =0;
+-    AutoMutex lock(mHardwareLock);
+-    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
+-    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
+-    value =dev->GetAudioCommand(dev,parameters1);
+-    mHardwareStatus = AUDIO_HW_IDLE;
+-    return value;
+-}
+-#endif
+-
+ static int load_audio_interface(const char *if_name, audio_hw_device_t **dev)
+ {
+     const hw_module_t *mod;
+@@ -2011,6 +1964,20 @@ status_t AudioFlinger::setLowRamDevice(bool isLowRamDevice)
+     return NO_ERROR;
+ }
+ 
++#ifdef HAVE_PRE_KITKAT_AUDIO_BLOB
++audio_io_handle_t AudioFlinger::openOutput(audio_module_handle_t module,
++                                           audio_devices_t *pDevices,
++                                           uint32_t *pSamplingRate,
++                                           audio_format_t *pFormat,
++                                           audio_channel_mask_t *pChannelMask,
++                                           uint32_t *pLatencyMs,
++                                           audio_output_flags_t flags)
++{
++    return openOutput(module, pDevices, pSamplingRate, pFormat, pChannelMask,
++            pLatencyMs, flags);
++}
++#endif
++
+ audio_hw_sync_t AudioFlinger::getAudioHwSyncForSession(audio_session_t sessionId)
+ {
+     Mutex::Autolock _l(mLock);
+@@ -2452,7 +2419,9 @@ sp<AudioFlinger::RecordThread> AudioFlinger::openInput_l(audio_module_handle_t m
+     // resample the input and do mono to stereo or stereo to mono conversions on 16 bit PCM inputs.
+     if (status == BAD_VALUE &&
+             config->format == halconfig.format && halconfig.format == AUDIO_FORMAT_PCM_16_BIT &&
++#ifndef MTK_HARDWARE
+         (halconfig.sample_rate <= 2 * config->sample_rate) &&
++#endif
+         (audio_channel_count_from_in_mask(halconfig.channel_mask) <= FCC_2) &&
+         (audio_channel_count_from_in_mask(config->channel_mask) <= FCC_2)) {
+         // FIXME describe the change proposed by HAL (save old values so we can log them here)
+diff --git a/services/audioflinger/AudioFlinger.h b/services/audioflinger/AudioFlinger.h
+index f960c16e8..3b1b6c399 100644
+--- a/services/audioflinger/AudioFlinger.h
++++ b/services/audioflinger/AudioFlinger.h
+@@ -124,12 +124,6 @@ class AudioFlinger :
+ public:
+     static const char* getServiceName() ANDROID_API { return "media.audio_flinger"; }
+ 
+-#ifdef MTK_HARDWARE
+-    virtual status_t SetAudioData(int par1,size_t len,void *ptr);
+-    virtual status_t GetAudioData(int par1,size_t len,void *ptr);
+-    virtual status_t SetAudioCommand(int parameters1,int parameters2);
+-    virtual status_t GetAudioCommand(int parameters1);
+-#endif
+     virtual     status_t    dump(int fd, const Vector<String16>& args);
+ 
+     // IAudioFlinger interface, in binder opcode order
+@@ -208,6 +202,16 @@ public:
+     virtual     size_t      getInputBufferSize(uint32_t sampleRate, audio_format_t format,
+                                                audio_channel_mask_t channelMask) const;
+ 
++#ifdef HAVE_PRE_KITKAT_AUDIO_BLOB
++    virtual audio_io_handle_t openOutput(audio_module_handle_t module,
++                                         audio_devices_t *pDevices,
++                                         uint32_t *pSamplingRate,
++                                         audio_format_t *pFormat,
++                                         audio_channel_mask_t *pChannelMask,
++                                         uint32_t *pLatencyMs,
++                                         audio_output_flags_t flags);
++#endif
++
+     virtual status_t openOutput(audio_module_handle_t module,
+                                 audio_io_handle_t *output,
+                                 audio_config_t *config,
+diff --git a/services/audioflinger/AudioResampler.cpp b/services/audioflinger/AudioResampler.cpp
+index 0f4eaa58e..480e99a23 100644
+--- a/services/audioflinger/AudioResampler.cpp
++++ b/services/audioflinger/AudioResampler.cpp
+@@ -27,6 +27,9 @@
+ #include "AudioResamplerSinc.h"
+ #include "AudioResamplerCubic.h"
+ #include "AudioResamplerDyn.h"
++#ifdef MTK_HARDWARE
++#include "AudioResamplermtk.h"
++#endif
+ 
+ #ifdef QTI_RESAMPLER
+ #include "AudioResamplerQTI.h"
+@@ -39,14 +42,22 @@
+ namespace android {
+ 
+ #ifdef __ARM_HAVE_HALFWORD_MULTIPLY // optimized asm option
++#ifndef MTK_HARDWARE
+     #define ASM_ARM_RESAMP1 // enable asm optimisation for ResamplerOrder1
++#endif
+ #endif // __ARM_HAVE_HALFWORD_MULTIPLY
+ // ----------------------------------------------------------------------------
+ 
+ class AudioResamplerOrder1 : public AudioResampler {
+ public:
++//#ifdef MTK_AUDIO
++    AudioResamplerOrder1(int bitDepth, int inChannelCount, int32_t sampleRate) :
++        AudioResampler(bitDepth, inChannelCount, sampleRate, LOW_QUALITY), mX0L(0), mX0R(0) {
++            }
++//#else
+     AudioResamplerOrder1(int inChannelCount, int32_t sampleRate) :
+         AudioResampler(inChannelCount, sampleRate, LOW_QUALITY), mX0L(0), mX0R(0) {
++//#endif
+     }
+     virtual void resample(int32_t* out, size_t outFrameCount,
+             AudioBufferProvider* provider);
+@@ -57,7 +68,11 @@ private:
+     // bits to shift the phase fraction down to avoid overflow
+     static const int kPreInterpShift = kNumPhaseBits - kNumInterpBits;
+ 
++//#ifndef MTK_AUDIO
+     void init() {}
++//#else
++    void init(int32_t SrcSampleRate) {}
++//#endif
+     void resampleMono16(int32_t* out, size_t outFrameCount,
+             AudioBufferProvider* provider);
+     void resampleStereo16(int32_t* out, size_t outFrameCount,
+@@ -142,6 +157,10 @@ uint32_t AudioResampler::qualityMHz(src_quality quality)
+         return 6;
+     case HIGH_QUALITY:
+         return 20;
++#ifdef MTK_HARDWARE
++    case MTK_QUALITY:
++        return 28;
++#endif
+     case VERY_HIGH_QUALITY:
+ #ifdef QTI_RESAMPLER
+     case QTI_QUALITY: //for QTI_QUALITY, currently assuming same as VHQ
+@@ -160,8 +179,10 @@ static const uint32_t maxMHz = 130; // an arbitrary number that permits 3 VHQ, s
+ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+ static uint32_t currentMHz = 0;
+ 
+-AudioResampler* AudioResampler::create(audio_format_t format, int inChannelCount,
+-        int32_t sampleRate, src_quality quality) {
++//#ifdef MTK_AUDIO
++AudioResampler* AudioResampler::create(int format, int inChannelCount,
++        int32_t sampleRate, src_quality quality, int32_t SrcSampleRate) {
++//#endif
+ 
+     bool atFinalQuality;
+     if (quality == DEFAULT_QUALITY) {
+@@ -201,6 +222,9 @@ AudioResampler* AudioResampler::create(audio_format_t format, int inChannelCount
+         switch (quality) {
+         default:
+         case LOW_QUALITY:
++#ifdef MTK_HARDWARE
++        case MTK_QUALITY:
++#endif
+             atFinalQuality = true;
+             break;
+         case MED_QUALITY:
+@@ -237,22 +261,38 @@ AudioResampler* AudioResampler::create(audio_format_t format, int inChannelCount
+     case LOW_QUALITY:
+         ALOGV("Create linear Resampler");
+         LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++#ifdef MTK_HARDWARE
++        resampler = new AudioResamplerOrder1(format, inChannelCount, sampleRate);
++        #else
+         resampler = new AudioResamplerOrder1(inChannelCount, sampleRate);
++        #endif
+         break;
+     case MED_QUALITY:
+         ALOGV("Create cubic Resampler");
+         LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++#ifdef MTK_HARDWARE
++        resampler = new AudioResamplerCubic(format, inChannelCount, sampleRate);
++        #else
+         resampler = new AudioResamplerCubic(inChannelCount, sampleRate);
++        #endif
+         break;
+     case HIGH_QUALITY:
+         ALOGV("Create HIGH_QUALITY sinc Resampler");
+         LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++#ifdef MTK_HARDWARE
++        resampler = new AudioResamplerSinc(format, inChannelCount, sampleRate);
++        #else
+         resampler = new AudioResamplerSinc(inChannelCount, sampleRate);
++        #endif
+         break;
+     case VERY_HIGH_QUALITY:
+         ALOGV("Create VERY_HIGH_QUALITY sinc Resampler = %d", quality);
+         LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++#ifdef MTK_HARDWARE
++        resampler = new AudioResamplerSinc(format, inChannelCount, sampleRate);
++        #else
+         resampler = new AudioResamplerSinc(inChannelCount, sampleRate, quality);
++        #endif
+         break;
+     case DYN_LOW_QUALITY:
+     case DYN_MED_QUALITY:
+@@ -278,18 +318,195 @@ AudioResampler* AudioResampler::create(audio_format_t format, int inChannelCount
+         resampler = new AudioResamplerQTI(format, inChannelCount, sampleRate);
+         break;
+ #endif
++#if 0//def MTK_AUDIO
++    case MTK_QUALITY:
++        ALOGD("Create MTK Resampler");
++        resampler = new AudioResamplerMtk(format, inChannelCount, sampleRate);
++        break;
++    case MTK_QUALITY_32BIT:
++        ALOGD("Create MTK Resampler");
++#ifdef MTK_HD_AUDIO_ARCHITECTURE
++        resampler = new AudioResamplerMtk32(format, inChannelCount, sampleRate);
++#else
++        resampler = new AudioResamplerMtk(format, inChannelCount, sampleRate);
++#endif
++        break;
++#endif // MTK_AUDIO
++    }
++
++    // initialize resampler
++#ifndef MTK_HARDWARE
++    resampler->init();
++#else
++    resampler->init(SrcSampleRate);
++#endif
++    return resampler;
++}
++//#else
++AudioResampler* AudioResampler::create(audio_format_t format, int inChannelCount,
++        int32_t sampleRate, src_quality quality) {
++//#endif
++    bool atFinalQuality;
++    if (quality == DEFAULT_QUALITY) {
++        // read the resampler default quality property the first time it is needed
++        int ok = pthread_once(&once_control, init_routine);
++        if (ok != 0) {
++            ALOGE("%s pthread_once failed: %d", __func__, ok);
++        }
++        quality = defaultQuality;
++        atFinalQuality = false;
++    } else {
++        atFinalQuality = true;
++    }
++
++    /* if the caller requests DEFAULT_QUALITY and af.resampler.property
++     * has not been set, the target resampler quality is set to DYN_MED_QUALITY,
++     * and allowed to "throttle" down to DYN_LOW_QUALITY if necessary
++     * due to estimated CPU load of having too many active resamplers
++     * (the code below the if).
++     */
++    if (quality == DEFAULT_QUALITY) {
++        quality = DYN_MED_QUALITY;
++    }
++
++    // naive implementation of CPU load throttling doesn't account for whether resampler is active
++    pthread_mutex_lock(&mutex);
++    for (;;) {
++        uint32_t deltaMHz = qualityMHz(quality);
++        uint32_t newMHz = currentMHz + deltaMHz;
++        if ((qualityIsSupported(quality) && newMHz <= maxMHz) || atFinalQuality) {
++            ALOGV("resampler load %u -> %u MHz due to delta +%u MHz from quality %d",
++                    currentMHz, newMHz, deltaMHz, quality);
++            currentMHz = newMHz;
++            break;
++        }
++        // not enough CPU available for proposed quality level, so try next lowest level
++        switch (quality) {
++        default:
++        case LOW_QUALITY:
++            atFinalQuality = true;
++            break;
++        case MED_QUALITY:
++            quality = LOW_QUALITY;
++            break;
++        case HIGH_QUALITY:
++            quality = MED_QUALITY;
++            break;
++        case VERY_HIGH_QUALITY:
++            quality = HIGH_QUALITY;
++            break;
++        case DYN_LOW_QUALITY:
++            atFinalQuality = true;
++            break;
++        case DYN_MED_QUALITY:
++            quality = DYN_LOW_QUALITY;
++            break;
++        case DYN_HIGH_QUALITY:
++            quality = DYN_MED_QUALITY;
++            break;
++        }
++    }
++    pthread_mutex_unlock(&mutex);
++
++    AudioResampler* resampler;
++
++    switch (quality) {
++    default:
++    case LOW_QUALITY:
++        ALOGV("Create linear Resampler");
++        LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++       // #ifdef MTK_AUDIO        
++        //resampler = new AudioResamplerOrder1(format, inChannelCount, sampleRate);
++        //#else
++        resampler = new AudioResamplerOrder1(inChannelCount, sampleRate);
++        //#endif
++        break;
++    case MED_QUALITY:
++        ALOGV("Create cubic Resampler");
++        LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++        //#ifdef MTK_AUDIO        
++       // resampler = new AudioResamplerCubic(format, inChannelCount, sampleRate);
++        //#else
++        resampler = new AudioResamplerCubic(inChannelCount, sampleRate);
++        //#endif
++        break;
++    case HIGH_QUALITY:
++        ALOGV("Create HIGH_QUALITY sinc Resampler");
++        LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++        //#ifdef MTK_AUDIO        
++        //resampler = new AudioResamplerSinc(format, inChannelCount, sampleRate);
++       // #else
++        resampler = new AudioResamplerSinc(inChannelCount, sampleRate);
++       // #endif
++        break;
++    case VERY_HIGH_QUALITY:
++        ALOGV("Create VERY_HIGH_QUALITY sinc Resampler = %d", quality);
++        LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++        //#ifdef MTK_AUDIO        
++        //resampler = new AudioResamplerSinc(format, inChannelCount, sampleRate);
++        //#else
++        resampler = new AudioResamplerSinc(inChannelCount, sampleRate, quality);
++       // #endif
++        break;
++    case DYN_LOW_QUALITY:
++    case DYN_MED_QUALITY:
++    case DYN_HIGH_QUALITY:
++        ALOGV("Create dynamic Resampler = %d", quality);
++        if (format == AUDIO_FORMAT_PCM_FLOAT) {
++            resampler = new AudioResamplerDyn<float, float, float>(inChannelCount,
++                    sampleRate, quality);
++        } else {
++            LOG_ALWAYS_FATAL_IF(format != AUDIO_FORMAT_PCM_16_BIT);
++            if (quality == DYN_HIGH_QUALITY) {
++                resampler = new AudioResamplerDyn<int32_t, int16_t, int32_t>(inChannelCount,
++                        sampleRate, quality);
++            } else {
++                resampler = new AudioResamplerDyn<int16_t, int16_t, int32_t>(inChannelCount,
++                        sampleRate, quality);
++            }
++        }
++        break;
+     }
+ 
+     // initialize resampler
++//#ifndef MTK_AUDIO 
+     resampler->init();
++//#else
++//    resampler->init(SrcSampleRate);
++//#endif
+     return resampler;
+ }
++//#ifdef MTK_AUDIO 
++AudioResampler::AudioResampler(int format, int inChannelCount,
++        int32_t sampleRate, src_quality quality) :
++    mBitDepth(format), mChannelCount(inChannelCount),
++        mSampleRate(sampleRate), mInSampleRate(sampleRate), mInputIndex(0),
++        mPhaseFraction(0), mLocalTimeFreq(0),
++        mPTS(AudioBufferProvider::kInvalidPTS), mQuality(quality) {
++
++    const int maxChannels = quality < DYN_LOW_QUALITY ? 2 : 8;
++    if ( ((format != 16)&&(format != 24)&&(format != 32)) ||(inChannelCount < 1) || (inChannelCount > 2)) {
++        LOG_ALWAYS_FATAL("Unsupported sample format %d quality %d channels",
++                quality, inChannelCount);
++    }
++    if (sampleRate <= 0) {
++        LOG_ALWAYS_FATAL("Unsupported sample rate %d Hz", sampleRate);
++    }
++
++    // initialize common members
++    mVolume[0] = mVolume[1] = 0;
++    mBuffer.frameCount = 0;
++}
++//#endif
+ 
+ AudioResampler::AudioResampler(int inChannelCount,
+         int32_t sampleRate, src_quality quality) :
+         mChannelCount(inChannelCount),
+         mSampleRate(sampleRate), mInSampleRate(sampleRate), mInputIndex(0),
+         mPhaseFraction(0), mLocalTimeFreq(0),
++            //#ifdef MTK_AUDIO
++            mBitDepth(16),
++            //#endif
+         mPTS(AudioBufferProvider::kInvalidPTS), mQuality(quality) {
+ 
+     const int maxChannels = quality < DYN_LOW_QUALITY ? 2 : 8;
+diff --git a/services/audioflinger/AudioResampler.h b/services/audioflinger/AudioResampler.h
+index 54130c4eb..8bd91e5b7 100644
+--- a/services/audioflinger/AudioResampler.h
++++ b/services/audioflinger/AudioResampler.h
+@@ -47,6 +47,9 @@ public:
+         DYN_HIGH_QUALITY=7,
+ #ifdef QTI_RESAMPLER
+         QTI_QUALITY=8,
++#endif
++#ifdef MTK_HARDWARE
++        MTK_QUALITY=8,
+ #endif
+     };
+ 
+@@ -54,10 +57,16 @@ public:
+ 
+     static AudioResampler* create(audio_format_t format, int inChannelCount,
+             int32_t sampleRate, src_quality quality=DEFAULT_QUALITY);
++//#else
++    static AudioResampler* create(int bitDepth, int inChannelCount,
++            int32_t sampleRate, src_quality quality=DEFAULT_QUALITY, int32_t SrcSampleRate=0);
+ 
+     virtual ~AudioResampler();
+ 
+     virtual void init() = 0;
++//#else
++    virtual void init(int32_t SrcSampleRate) = 0;
++//#endif
+     virtual void setSampleRate(int32_t inSampleRate);
+     virtual void setVolume(float left, float right);
+     virtual void setLocalTimeFreq(uint64_t freq);
+@@ -94,12 +103,18 @@ protected:
+ 
+     AudioResampler(int inChannelCount, int32_t sampleRate, src_quality quality);
+ 
++//#else
++    AudioResampler(int bitDepth, int inChannelCount, int32_t sampleRate, src_quality quality);
++//#endif
+     // prevent copying
+     AudioResampler(const AudioResampler&);
+     AudioResampler& operator=(const AudioResampler&);
+ 
+     int64_t calculateOutputPTS(int outputFrameIndex);
+ 
++//#ifdef MTK_AUDIO
++    const int32_t mBitDepth;
++//#endif
+     const int32_t mChannelCount;
+     const int32_t mSampleRate;
+     int32_t mInSampleRate;
+diff --git a/services/audioflinger/AudioResamplerCubic.cpp b/services/audioflinger/AudioResamplerCubic.cpp
+index 8f14ff917..8659c5dbd 100644
+--- a/services/audioflinger/AudioResamplerCubic.cpp
++++ b/services/audioflinger/AudioResamplerCubic.cpp
+@@ -26,8 +26,15 @@
+ 
+ namespace android {
+ // ----------------------------------------------------------------------------
++//#ifdef MTK_AUDIO
++void AudioResamplerCubic::init(int32_t SrcSampleRate) {
++        memset(&left, 0, sizeof(state));
++        memset(&right, 0, sizeof(state));
++    }
+ 
++//#else
+ void AudioResamplerCubic::init() {
++//#endif
+     memset(&left, 0, sizeof(state));
+     memset(&right, 0, sizeof(state));
+ }
+diff --git a/services/audioflinger/AudioResamplerCubic.h b/services/audioflinger/AudioResamplerCubic.h
+index b315da52f..b975d0f13 100644
+--- a/services/audioflinger/AudioResamplerCubic.h
++++ b/services/audioflinger/AudioResamplerCubic.h
+@@ -28,8 +28,14 @@ namespace android {
+ 
+ class AudioResamplerCubic : public AudioResampler {
+ public:
++//#ifdef MTK_AUDIO
++    AudioResamplerCubic(int bitDepth, int inChannelCount, int32_t sampleRate) :
++        AudioResampler(bitDepth, inChannelCount, sampleRate, MED_QUALITY) {
++            }
++//#else
+     AudioResamplerCubic(int inChannelCount, int32_t sampleRate) :
+         AudioResampler(inChannelCount, sampleRate, MED_QUALITY) {
++//#endif
+     }
+     virtual void resample(int32_t* out, size_t outFrameCount,
+             AudioBufferProvider* provider);
+@@ -42,7 +48,11 @@ private:
+     typedef struct {
+         int32_t a, b, c, y0, y1, y2, y3;
+     } state;
++//#ifdef MTK_AUDIO
++    void init(int32_t SrcSampleRate);
++//#else
+     void init();
++//#endif
+     void resampleMono16(int32_t* out, size_t outFrameCount,
+             AudioBufferProvider* provider);
+     void resampleStereo16(int32_t* out, size_t outFrameCount,
+diff --git a/services/audioflinger/AudioResamplerDyn.cpp b/services/audioflinger/AudioResamplerDyn.cpp
+index 0eeb201d8..a5b6bc2db 100644
+--- a/services/audioflinger/AudioResamplerDyn.cpp
++++ b/services/audioflinger/AudioResamplerDyn.cpp
+@@ -190,6 +190,14 @@ void AudioResamplerDyn<TC, TI, TO>::init()
+     mInBuffer.init();
+ }
+ 
++//#ifdef MTK_AUDIO
++template<typename TC, typename TI, typename TO>
++void AudioResamplerDyn<TC, TI, TO>::init(int32_t SrcSampleRate)
++    {
++        mFilterSampleRate = 0; // always trigger new filter generation
++        mInBuffer.init();
++    }
++//#endif
+ template<typename TC, typename TI, typename TO>
+ void AudioResamplerDyn<TC, TI, TO>::setVolume(float left, float right)
+ {
+@@ -311,6 +319,7 @@ void AudioResamplerDyn<TC, TI, TO>::setSampleRate(int32_t inSampleRate)
+             // 32b coefficients, 64 length
+             useS32 = true;
+             stopBandAtten = 98.;
++#ifndef MTK_HARDWARE
+             if (inSampleRate >= mSampleRate * 4) {
+                 halfLength = 48;
+             } else if (inSampleRate >= mSampleRate * 2) {
+@@ -318,6 +327,16 @@ void AudioResamplerDyn<TC, TI, TO>::setSampleRate(int32_t inSampleRate)
+             } else {
+                 halfLength = 32;
+             }
++#else
++            if (inSampleRate >= mSampleRate * 4) {
++                halfLength = 96;
++                tbwCheat = 1.1;
++            } else if (inSampleRate >= mSampleRate * 2) {
++                halfLength = 40;
++            } else {
++                halfLength = 48;
++            }
++#endif        
+         } else if (mFilterQuality == DYN_LOW_QUALITY) {
+             // 16b coefficients, 16-32 length
+             useS32 = false;
+diff --git a/services/audioflinger/AudioResamplerDyn.h b/services/audioflinger/AudioResamplerDyn.h
+index e886a681c..10c9bdb00 100644
+--- a/services/audioflinger/AudioResamplerDyn.h
++++ b/services/audioflinger/AudioResamplerDyn.h
+@@ -48,6 +48,9 @@ public:
+ 
+     virtual void init();
+ 
++//#ifdef MTK_AUDIO
++    virtual void init(int32_t SrcSampleRate);
++//#endif
+     virtual void setSampleRate(int32_t inSampleRate);
+ 
+     virtual void setVolume(float left, float right);
+diff --git a/services/audioflinger/AudioResamplerSinc.cpp b/services/audioflinger/AudioResamplerSinc.cpp
+index d03e578a5..4cc865d12 100644
+--- a/services/audioflinger/AudioResamplerSinc.cpp
++++ b/services/audioflinger/AudioResamplerSinc.cpp
+@@ -452,10 +452,45 @@ int32_t mulAddRL(int left, uint32_t inRL, int32_t v, int32_t a)
+ }
+ 
+ // ----------------------------------------------------------------------------
++//#ifdef MTK_AUDIO
++AudioResamplerSinc::AudioResamplerSinc(int bitDepth,
++    int inChannelCount, int32_t sampleRate, src_quality quality)
++    : AudioResampler(bitDepth, inChannelCount, sampleRate, quality),    
++    mState(0), mImpulse(0), mRingFull(0), mFirCoefs(0)
++{
++    /*
++     * Layout of the state buffer for 32 tap:
++     *
++     * "present" sample            beginning of 2nd buffer
++     *                 v                v
++     *  0              01               2              23              3
++     *  0              F0               0              F0              F
++     * [pppppppppppppppInnnnnnnnnnnnnnnnpppppppppppppppInnnnnnnnnnnnnnnn]
++     *                 ^               ^ head
++     *
++     * p = past samples, convoluted with the (p)ositive side of sinc()
++     * n = future samples, convoluted with the (n)egative side of sinc()
++     * r = extra space for implementing the ring buffer
++     *
++     */
++
++    mVolumeSIMD[0] = 0;
++    mVolumeSIMD[1] = 0;
+ 
++    // Load the constants for coefficients
++    int ok = pthread_once(&once_control, init_routine);
++    if (ok != 0) {
++        ALOGE("%s pthread_once failed: %d", __func__, ok);
++    }
++    mConstants = (quality == VERY_HIGH_QUALITY) ?
++            &veryHighQualityConstants : &highQualityConstants;
++}
++//#else
+ AudioResamplerSinc::AudioResamplerSinc(
++//#endif
+         int inChannelCount, int32_t sampleRate, src_quality quality)
+     : AudioResampler(inChannelCount, sampleRate, quality),
++//#endif
+     mState(0), mImpulse(0), mRingFull(0), mFirCoefs(0)
+ {
+     /*
+@@ -491,7 +526,19 @@ AudioResamplerSinc::~AudioResamplerSinc() {
+     free(mState);
+ }
+ 
++//#ifdef MTK_AUDIO
++void AudioResamplerSinc::init(int32_t SrcSampleRate) {
++    const Constants& c(*mConstants);
++    const size_t numCoefs = 2 * c.halfNumCoefs;
++    const size_t stateSize = numCoefs * mChannelCount * 2;
++    mState = (int16_t*)memalign(32, stateSize*sizeof(int16_t));
++    memset(mState, 0, sizeof(int16_t)*stateSize);
++    mImpulse  = mState   + (c.halfNumCoefs-1)*mChannelCount;
++    mRingFull = mImpulse + (numCoefs+1)*mChannelCount;
++}
++//#else
+ void AudioResamplerSinc::init() {
++//#endif
+     const Constants& c(*mConstants);
+     const size_t numCoefs = 2 * c.halfNumCoefs;
+     const size_t stateSize = numCoefs * mChannelCount * 2;
+diff --git a/services/audioflinger/AudioResamplerSinc.h b/services/audioflinger/AudioResamplerSinc.h
+index 4691d0a15..889f289a5 100644
+--- a/services/audioflinger/AudioResamplerSinc.h
++++ b/services/audioflinger/AudioResamplerSinc.h
+@@ -34,6 +34,10 @@ typedef int32_t (*readResampleFirLerpIntBitsFn)();
+ 
+ class AudioResamplerSinc : public AudioResampler {
+ public:
++//#ifdef MTK_AUDIO
++    AudioResamplerSinc(int bitDepth, int inChannelCount, int32_t sampleRate,
++    src_quality quality = HIGH_QUALITY);
++//#else
+     AudioResamplerSinc(int inChannelCount, int32_t sampleRate,
+             src_quality quality = HIGH_QUALITY);
+ 
+@@ -42,8 +46,12 @@ public:
+     virtual void resample(int32_t* out, size_t outFrameCount,
+             AudioBufferProvider* provider);
+ private:
++//#ifdef MTK_AUDIO
++    void init(int32_t SrcSampleRate);
++//#else
+     void init();
+ 
++//#endif
+     virtual void setVolume(float left, float right);
+ 
+     template<int CHANNELS>
+diff --git a/services/audioflinger/AudioResamplermtk.cpp b/services/audioflinger/AudioResamplermtk.cpp
+new file mode 100644
+index 000000000..dbd605c2a
+--- /dev/null
++++ b/services/audioflinger/AudioResamplermtk.cpp
+@@ -0,0 +1,277 @@
++/* Copyright Statement:
++ *
++ * This software/firmware and related documentation ("MediaTek Software") are
++ * protected under relevant copyright laws. The information contained herein
++ * is confidential and proprietary to MediaTek Inc. and/or its licensors.
++ * Without the prior written permission of MediaTek inc. and/or its licensors,
++ * any reproduction, modification, use or disclosure of MediaTek Software,
++ * and information contained herein, in whole or in part, shall be strictly prohibited.
++ */
++/* MediaTek Inc. (C) 2010. All rights reserved.
++ *
++ * BY OPENING THIS FILE, RECEIVER HEREBY UNEQUIVOCALLY ACKNOWLEDGES AND AGREES
++ * THAT THE SOFTWARE/FIRMWARE AND ITS DOCUMENTATIONS ("MEDIATEK SOFTWARE")
++ * RECEIVED FROM MEDIATEK AND/OR ITS REPRESENTATIVES ARE PROVIDED TO RECEIVER ON
++ * AN "AS-IS" BASIS ONLY. MEDIATEK EXPRESSLY DISCLAIMS ANY AND ALL WARRANTIES,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR NONINFRINGEMENT.
++ * NEITHER DOES MEDIATEK PROVIDE ANY WARRANTY WHATSOEVER WITH RESPECT TO THE
++ * SOFTWARE OF ANY THIRD PARTY WHICH MAY BE USED BY, INCORPORATED IN, OR
++ * SUPPLIED WITH THE MEDIATEK SOFTWARE, AND RECEIVER AGREES TO LOOK ONLY TO SUCH
++ * THIRD PARTY FOR ANY WARRANTY CLAIM RELATING THERETO. RECEIVER EXPRESSLY ACKNOWLEDGES
++ * THAT IT IS RECEIVER'S SOLE RESPONSIBILITY TO OBTAIN FROM ANY THIRD PARTY ALL PROPER LICENSES
++ * CONTAINED IN MEDIATEK SOFTWARE. MEDIATEK SHALL ALSO NOT BE RESPONSIBLE FOR ANY MEDIATEK
++ * SOFTWARE RELEASES MADE TO RECEIVER'S SPECIFICATION OR TO CONFORM TO A PARTICULAR
++ * STANDARD OR OPEN FORUM. RECEIVER'S SOLE AND EXCLUSIVE REMEDY AND MEDIATEK'S ENTIRE AND
++ * CUMULATIVE LIABILITY WITH RESPECT TO THE MEDIATEK SOFTWARE RELEASED HEREUNDER WILL BE,
++ * AT MEDIATEK'S OPTION, TO REVISE OR REPLACE THE MEDIATEK SOFTWARE AT ISSUE,
++ * OR REFUND ANY SOFTWARE LICENSE FEES OR SERVICE CHARGE PAID BY RECEIVER TO
++ * MEDIATEK FOR SUCH MEDIATEK SOFTWARE AT ISSUE.
++ *
++ * The following software/firmware and/or related documentation ("MediaTek Software")
++ * have been modified by MediaTek Inc. All revisions are subject to any receiver's
++ * applicable license agreements with MediaTek Inc.
++ */
++
++/*
++ * Copyright (C) 2007 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#define LOG_TAG "AudioResamplerMTK"
++
++#include "AudioResampler.h"
++#include "AudioResamplermtk.h"
++#include <cutils/xlog.h>
++
++namespace android {
++// ----------------------------------------------------------------------------
++static const int32_t kDefaultInSampleRate = 8000;
++static const int32_t kDefaultOutChannelCount = 2;
++
++
++AudioResamplerMtk::AudioResamplerMtk(int bitDepth,
++        int inChannelCount, int32_t sampleRate)
++    : AudioResampler(bitDepth, inChannelCount, sampleRate,MTK_QUALITY),
++    mOutputBuf(NULL),
++    mOutputBufSize(0),
++    mBliSrc(NULL)
++{
++
++}
++
++AudioResamplerMtk::~AudioResamplerMtk()
++{
++    delete mBliSrc;
++    delete[] mOutputBuf;
++}
++
++void AudioResamplerMtk::reset()
++{
++    SXLOGD("reset");
++    if(mBliSrc != NULL)
++    {
++        mBliSrc->reset();
++    }
++}
++
++void AudioResamplerMtk::init(int32_t SrcSampleRate)
++{
++    SXLOGD("init outsampleRate %u, intsampleRate %u",mSampleRate, SrcSampleRate);
++    if(SrcSampleRate) {
++        mBliSrc = new Blisrc(SrcSampleRate,mChannelCount, mSampleRate, kDefaultOutChannelCount);
++    }
++    else {
++    mBliSrc = new Blisrc(kDefaultInSampleRate,mChannelCount, mSampleRate, kDefaultOutChannelCount);
++    }
++    if(mBliSrc != NULL)
++    {
++        SXLOG_ASSERT(!mBliSrc->initCheck(),"Fail to open Blisrc");
++        if(!mBliSrc->initCheck()) // fail to init
++        {
++            delete mBliSrc;
++            mBliSrc = NULL;
++        }
++    }
++}
++
++void AudioResamplerMtk::setSampleRate(int32_t inSampleRate)
++{
++    //SXLOGD("setSampleRate %u",inSampleRate); log too much when playback
++    if(mBliSrc != NULL)
++    {
++        mInSampleRate = inSampleRate;
++        mBliSrc->setInSampleRate(inSampleRate);
++    }
++}
++
++status_t AudioResamplerMtk::configBuf(size_t size)
++{
++    int ret = OK;
++    if(mOutputBufSize != size)
++    {
++        mOutputBufSize = size;
++        if(mOutputBuf != NULL )
++        {
++            delete[] mOutputBuf;
++            mOutputBuf = NULL;
++        }
++        mOutputBuf = new int16_t[mOutputBufSize>>1];
++        if(mOutputBuf != NULL)
++        {
++            memset(mOutputBuf,0,mOutputBufSize);
++        }
++        else
++        {
++            ret = NO_MEMORY;
++        }
++    }
++    return ret;
++}
++
++void AudioResamplerMtk::resample(int32_t* out, size_t outFrameCount,
++        AudioBufferProvider* provider) {
++
++    if(mOutputBuf == NULL) // size of this buffer can only be determined at this time.
++    {
++        status_t ret = configBuf( outFrameCount << 2);
++        if(ret != OK)
++        {
++            SXLOGE("resample fail to configBuf, There is no memory");
++            return ;
++        }
++    }
++    
++    size_t outputIndex = 0;
++    size_t outputSampleCount = outFrameCount * 2;
++    size_t inFrameCount = ((outFrameCount*mInSampleRate)+4)/mSampleRate;
++
++    SXLOGV("starting resample outFrameCount %d, outputSampleCount %d, inFrameCount %d",
++          outFrameCount,outputSampleCount,inFrameCount);
++
++    // still have data to ouput
++    while(outFrameCount){
++        if(mBuffer.frameCount == 0) 
++        {
++            mBuffer.frameCount = inFrameCount;
++            provider->getNextBuffer(&mBuffer);  // get bufferNumber
++            if (mBuffer.raw == NULL) {
++                SXLOGD("AudioResamplerMtk::resample() can't get buffer");
++                reset();
++                goto Mtkresample_exit;
++            }
++        }
++        int16_t *in = mBuffer.i16;
++        size_t inBufSize = mBuffer.frameCount * mChannelCount * (mBitDepth>>3);
++        size_t outBuffSize = outFrameCount <<2;
++        int consume =0;
++        if(mBliSrc)
++        {
++            SXLOGV("+resample inBufSize %d, outBufSize %d",inBufSize,outBuffSize);
++            consume = mBliSrc->resample(in,&inBufSize, mOutputBuf + outputIndex,&outBuffSize);
++            SXLOGV("-resample consume %d, inBufSize %d, outBufSize %d",consume,inBufSize,outBuffSize);
++        }
++        else
++        {
++            SXLOGE("Can not Resampler, pad 0");
++            consume = inBufSize;
++            memset((void*)(mOutputBuf + outputIndex),0,inBufSize);
++        }
++        outputIndex += outBuffSize >>1;
++        outFrameCount -= outBuffSize >>2;
++        mBuffer.frameCount = consume>>mChannelCount;
++        provider->releaseBuffer(&mBuffer);// release buffer
++    }
++
++Mtkresample_exit:
++    int32_t vl = mVolume[0];
++    int32_t vr = mVolume[1];
++    size_t inputIndex = 0;
++    while(inputIndex < outputIndex){
++        out[inputIndex] += mOutputBuf[inputIndex] * vl;
++        inputIndex++;
++        out[inputIndex] += mOutputBuf[inputIndex] * vr;
++        inputIndex++;
++    }
++}
++
++
++AudioResamplerMtk::Blisrc::Blisrc(int inSampleRate, int inChannelCount, int outSampleRate,int outChannelCount)
++    :mInSampleRate(inSampleRate),
++    mInChannelCount(inChannelCount),
++    mOutSampleRate(outSampleRate),
++    mOutChannelCount(outChannelCount),
++    mWorkBufSize(0),
++	mWorkBuf(NULL),
++	mHandle(NULL),
++	mInitCheck(NO_INIT)
++{
++    init();
++}
++
++AudioResamplerMtk::Blisrc::~Blisrc()
++{
++    if(mInitCheck == OK )
++    {
++        BLI_Close(mHandle,NULL);
++        delete[] mWorkBuf;
++    }
++        
++}
++bool AudioResamplerMtk::Blisrc::initCheck()
++{
++    return mInitCheck==OK ? true : false;
++}
++
++void AudioResamplerMtk::Blisrc::init()
++{
++    BLI_GetMemSize(mInSampleRate, mInChannelCount, mOutSampleRate, mOutChannelCount, &mWorkBufSize);
++    if(mWorkBufSize > 0 )
++    {
++        mWorkBuf = new int8_t[mWorkBufSize];
++        if(mWorkBuf != NULL)
++        {
++            memset((void*)mWorkBuf,0,mWorkBufSize);
++            mHandle = BLI_Open(mInSampleRate, mInChannelCount, mOutSampleRate, mOutChannelCount,(char *)mWorkBuf,NULL);
++            if(mHandle != 0)
++            {
++                mInitCheck = OK;
++                return;
++            }
++            delete[] mWorkBuf;
++        }
++    }
++}
++
++int AudioResamplerMtk::Blisrc::setInSampleRate(int32_t inSampleRate)
++{
++    mInSampleRate = inSampleRate;
++    return BLI_SetSamplingRate(mHandle,mInSampleRate);
++}
++
++int AudioResamplerMtk::Blisrc::resample(void * inBuf, size_t * pInSize, void *outBuf, size_t * pOutSize)
++{
++    return BLI_Convert(mHandle,(short*)inBuf, pInSize, (short*)outBuf, pOutSize);
++}
++
++int AudioResamplerMtk::Blisrc::reset()
++{
++    return BLI_Reset(mHandle);
++}
++
++
++// ----------------------------------------------------------------------------
++}
++; // namespace android
++
+diff --git a/services/audioflinger/AudioResamplermtk.h b/services/audioflinger/AudioResamplermtk.h
+new file mode 100644
+index 000000000..a2a473fef
+--- /dev/null
++++ b/services/audioflinger/AudioResamplermtk.h
+@@ -0,0 +1,107 @@
++/* Copyright Statement:
++ *
++ * This software/firmware and related documentation ("MediaTek Software") are
++ * protected under relevant copyright laws. The information contained herein
++ * is confidential and proprietary to MediaTek Inc. and/or its licensors.
++ * Without the prior written permission of MediaTek inc. and/or its licensors,
++ * any reproduction, modification, use or disclosure of MediaTek Software,
++ * and information contained herein, in whole or in part, shall be strictly prohibited.
++ */
++/* MediaTek Inc. (C) 2010. All rights reserved.
++ *
++ * BY OPENING THIS FILE, RECEIVER HEREBY UNEQUIVOCALLY ACKNOWLEDGES AND AGREES
++ * THAT THE SOFTWARE/FIRMWARE AND ITS DOCUMENTATIONS ("MEDIATEK SOFTWARE")
++ * RECEIVED FROM MEDIATEK AND/OR ITS REPRESENTATIVES ARE PROVIDED TO RECEIVER ON
++ * AN "AS-IS" BASIS ONLY. MEDIATEK EXPRESSLY DISCLAIMS ANY AND ALL WARRANTIES,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR NONINFRINGEMENT.
++ * NEITHER DOES MEDIATEK PROVIDE ANY WARRANTY WHATSOEVER WITH RESPECT TO THE
++ * SOFTWARE OF ANY THIRD PARTY WHICH MAY BE USED BY, INCORPORATED IN, OR
++ * SUPPLIED WITH THE MEDIATEK SOFTWARE, AND RECEIVER AGREES TO LOOK ONLY TO SUCH
++ * THIRD PARTY FOR ANY WARRANTY CLAIM RELATING THERETO. RECEIVER EXPRESSLY ACKNOWLEDGES
++ * THAT IT IS RECEIVER'S SOLE RESPONSIBILITY TO OBTAIN FROM ANY THIRD PARTY ALL PROPER LICENSES
++ * CONTAINED IN MEDIATEK SOFTWARE. MEDIATEK SHALL ALSO NOT BE RESPONSIBLE FOR ANY MEDIATEK
++ * SOFTWARE RELEASES MADE TO RECEIVER'S SPECIFICATION OR TO CONFORM TO A PARTICULAR
++ * STANDARD OR OPEN FORUM. RECEIVER'S SOLE AND EXCLUSIVE REMEDY AND MEDIATEK'S ENTIRE AND
++ * CUMULATIVE LIABILITY WITH RESPECT TO THE MEDIATEK SOFTWARE RELEASED HEREUNDER WILL BE,
++ * AT MEDIATEK'S OPTION, TO REVISE OR REPLACE THE MEDIATEK SOFTWARE AT ISSUE,
++ * OR REFUND ANY SOFTWARE LICENSE FEES OR SERVICE CHARGE PAID BY RECEIVER TO
++ * MEDIATEK FOR SUCH MEDIATEK SOFTWARE AT ISSUE.
++ *
++ * The following software/firmware and/or related documentation ("MediaTek Software")
++ * have been modified by MediaTek Inc. All revisions are subject to any receiver's
++ * applicable license agreements with MediaTek Inc.
++ */
++
++/*
++ * Copyright (C) 2007 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef ANDROID_AUDIO_RESAMPLER_MTK_H
++#define ANDROID_AUDIO_RESAMPLER_MTK_H
++
++#include "AudioResampler.h"
++#include "bli_exp.h"
++
++
++namespace android {
++// ----------------------------------------------------------------------------
++
++class AudioResamplerMtk : public AudioResampler {
++
++public:
++    AudioResamplerMtk(int bitDepth, int inChannelCount, int32_t sampleRate);
++
++    ~AudioResamplerMtk();
++	virtual void setSampleRate(int32_t inSampleRate);
++    virtual void resample(int32_t* out, size_t outFrameCount,
++            AudioBufferProvider* provider);
++    virtual void reset(void);
++    virtual void init(int32_t SrcSampleRate);
++
++private:
++	class Blisrc{
++		public:
++			Blisrc(int32_t inSampleRate, int32_t inChannelCount, int32_t OutSampleRate,int32_t outChannelCount);
++			~Blisrc();
++			int setInSampleRate(int32_t inSampleRate);
++			int reset();
++			int resample(void * inBuf, size_t * inSize, void *outBuf, size_t * outSize);
++			bool initCheck();
++			
++		private:
++			Blisrc(const Blisrc &);
++			Blisrc & operator= (const Blisrc &);
++			void init();
++			int32_t mInSampleRate;
++			int32_t mInChannelCount;
++			int32_t mOutSampleRate;
++			int32_t mOutChannelCount;
++			size_t mWorkBufSize;
++			int8_t  *mWorkBuf;
++			BLI_HANDLE *mHandle	;
++			status_t mInitCheck;
++		};
++	status_t configBuf(size_t size);
++	int16_t *mOutputBuf ;
++	size_t mOutputBufSize ;
++	Blisrc *mBliSrc;
++};
++
++// ----------------------------------------------------------------------------
++}; // namespace android
++
++#endif /*ANDROID_AUDIO_RESAMPLER_MTK_H*/
++
+diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
+index ddd8ed283..9a6117b08 100644
+--- a/services/audioflinger/Threads.cpp
++++ b/services/audioflinger/Threads.cpp
+@@ -97,6 +97,10 @@
+ #include "postpro_patch.h"
+ #endif
+ 
++#ifdef MTK_HARDWARE
++#include "AudioResamplermtk.h"
++#endif
++
+ // ----------------------------------------------------------------------------
+ 
+ // Note: the following macro is used for extremely verbose logging message.  In
+@@ -363,6 +367,17 @@ static void sFastTrackMultiplierInit()
+     }
+ }
+ 
++#ifdef MTK_HARDWARE
++void inline MTK_downmix_to_mono_i16_from_stereo_i16(int16_t *dst, const int16_t *src, size_t count)
++{
++    ALOGD("MTK_downmix_to_mono_i16_from_stereo_i16");
++    while (count--) {
++        *dst++ = src[0];
++        src += 2;
++    }
++}
++#endif
++
+ // ----------------------------------------------------------------------------
+ 
+ #ifdef ADD_BATTERY_DATA
+@@ -5959,8 +5974,13 @@ reacquire_wakelock:
+                                 framesOut);
+                         // the resampler always outputs stereo samples:
+                         // do post stereo to mono conversion
++#ifdef MTK_HARDWARE                  
++                        MTK_downmix_to_mono_i16_from_stereo_i16(activeTrack->mSink.i16, (int16_t *)activeTrack->mRsmpOutBuffer,
++                                framesOut);
++#else     
+                         downmix_to_mono_i16_from_stereo_i16(activeTrack->mSink.i16,
+                                 (const int16_t *)activeTrack->mRsmpOutBuffer, framesOut);
++#endif
+                     } else {
+                         ditherAndClamp((int32_t *)activeTrack->mSink.raw,
+                                 activeTrack->mRsmpOutBuffer, framesOut);
+diff --git a/services/audiopolicy/AudioPolicyInterfaceImplLegacy.cpp b/services/audiopolicy/AudioPolicyInterfaceImplLegacy.cpp
+index 146718817..e063a52fe 100644
+--- a/services/audiopolicy/AudioPolicyInterfaceImplLegacy.cpp
++++ b/services/audiopolicy/AudioPolicyInterfaceImplLegacy.cpp
+@@ -475,6 +475,7 @@ bool AudioPolicyService::isStreamActive(audio_stream_type_t stream, uint32_t inP
+ 
+ bool AudioPolicyService::isStreamActiveRemotely(audio_stream_type_t stream, uint32_t inPastMs) const
+ {
++#if !defined(ICS_AUDIO_BLOB) && !defined(MR1_AUDIO_BLOB)
+     if (uint32_t(stream) >= AUDIO_STREAM_CNT) {
+         return BAD_VALUE;
+     }
+@@ -483,6 +484,9 @@ bool AudioPolicyService::isStreamActiveRemotely(audio_stream_type_t stream, uint
+     }
+     Mutex::Autolock _l(mLock);
+     return mpAudioPolicy->is_stream_active_remotely(mpAudioPolicy, stream, inPastMs);
++#else
++    return 0;
++#endif
+ }
+ 
+ bool AudioPolicyService::isSourceActive(audio_source_t source) const
+@@ -494,6 +498,10 @@ bool AudioPolicyService::isSourceActive(audio_source_t source) const
+         return false;
+     }
+     Mutex::Autolock _l(mLock);
++#ifdef HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
++    if (source == AUDIO_SOURCE_HOTWORD)
++      source = AUDIO_SOURCE_VOICE_RECOGNITION;
++#endif
+     return mpAudioPolicy->is_source_active(mpAudioPolicy, source);
+ }
+ 
+@@ -519,9 +527,9 @@ status_t AudioPolicyService::queryDefaultPreProcessing(int audioSession,
+ 
+ bool AudioPolicyService::isOffloadSupported(const audio_offload_info_t& info)
+ {
+-#if HAVE_PRE_KITKAT_AUDIO_POLICY_BLOB
++#ifdef HAVE_PRE_KITKAT_AUDIO_BLOB
+     return false;
+-#endif
++#else
+     if (mpAudioPolicy == NULL) {
+         ALOGV("mpAudioPolicy == NULL");
+         return false;
+@@ -533,6 +541,7 @@ bool AudioPolicyService::isOffloadSupported(const audio_offload_info_t& info)
+     }
+ 
+     return mpAudioPolicy->is_offload_supported(mpAudioPolicy, &info);
++#endif
+ }
+ 
+ status_t AudioPolicyService::listAudioPorts(audio_port_role_t role __unused,
+diff --git a/services/audiopolicy/AudioPolicyService.cpp b/services/audiopolicy/AudioPolicyService.cpp
+index cd033c97f..30794541b 100644
+--- a/services/audiopolicy/AudioPolicyService.cpp
++++ b/services/audiopolicy/AudioPolicyService.cpp
+@@ -276,18 +276,6 @@ void AudioPolicyService::setPowerHint(bool active) {
+     }
+ }
+ 
+-#ifdef MTK_HARDWARE
+-status_t AudioPolicyService::SetPolicyManagerParameters(int par1, int par2, int par3 , int par4)
+-{
+-    if (mpAudioPolicy == NULL) {
+-        return 0;
+-    }
+-    //SetPolicyManagerParameters no need to hold mlock.
+-    //Mutex::Autolock _l(mLock);
+-    return mpAudioPolicy->set_policy_parameters(mpAudioPolicy, par1, par2,par3,par4);
+-}
+-#endif
+-
+ static bool tryLock(Mutex& mutex)
+ {
+     bool locked = false;
+diff --git a/services/audiopolicy/AudioPolicyService.h b/services/audiopolicy/AudioPolicyService.h
+index 32dc6f2ef..fe2a3f657 100644
+--- a/services/audiopolicy/AudioPolicyService.h
++++ b/services/audiopolicy/AudioPolicyService.h
+@@ -129,9 +129,6 @@ public:
+     virtual bool isStreamActive(audio_stream_type_t stream, uint32_t inPastMs = 0) const;
+     virtual bool isStreamActiveRemotely(audio_stream_type_t stream, uint32_t inPastMs = 0) const;
+     virtual bool isSourceActive(audio_source_t source) const;
+-#ifdef MTK_HARDWARE
+-    virtual status_t SetPolicyManagerParameters(int par1, int par2, int par3 , int par4);
+-#endif
+ 
+     virtual status_t queryDefaultPreProcessing(int audioSession,
+                                               effect_descriptor_t *descriptors,
+-- 
+2.15.1
+

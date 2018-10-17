@@ -1,0 +1,53 @@
+From 186626cdf89fd2439bfdcba5aeac2c0c0fe93ac4 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Mon, 1 Jan 2018 16:53:32 +0100
+Subject: [PATCH] MTK: build boot.img and recovery.img with mtk header
+
+---
+ core/Makefile | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/core/Makefile b/core/Makefile
+index 1eb3b1a11..72506da75 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -487,6 +487,12 @@ INSTALLED_RAMDISK_TARGET := $(BUILT_RAMDISK_TARGET)
+ $(INSTALLED_RAMDISK_TARGET): $(MKBOOTFS) $(INTERNAL_RAMDISK_FILES) | $(MINIGZIP)
+ 	$(call pretty,"Target ram disk: $@")
+ 	$(hide) $(MKBOOTFS) $(TARGET_ROOT_OUT) | $(MINIGZIP) > $@
++ifneq ($(TARGET_MKIMAGE),)
++	$(call pretty,"Appending MTK header to ramdisk")
++	$(hide) $(TARGET_MKIMAGE) $@ ROOTFS > $(PRODUCT_OUT)/ramdisk_tmp.img
++	$(hide) mv $@ $(PRODUCT_OUT)/ramdisk_without_header.img
++	$(hide) mv $(PRODUCT_OUT)/ramdisk_tmp.img $@
++endif
+ 
+ .PHONY: ramdisk-nodeps
+ ramdisk-nodeps: $(MKBOOTFS) | $(MINIGZIP)
+@@ -971,6 +977,11 @@ $(recovery_ramdisk): $(MKBOOTFS) $(MINIGZIP) $(RECOVERYIMAGE_EXTRA_DEPS) \
+ $(recovery_uncompressed_ramdisk): $(MINIGZIP) $(recovery_ramdisk)
+ 	@echo -e ${CL_CYN}"----- Making uncompressed recovery ramdisk ------"${CL_RST}
+ 	$(MKBOOTFS) $(TARGET_RECOVERY_ROOT_OUT) > $@
++ifneq ($(TARGET_MKIMAGE),)
++	$(call pretty,"Appending MTK header to ramdisk")
++	$(hide) mv $@ $(recovery_ramdisk).tmp
++	$(hide) $(TARGET_MKIMAGE) $(recovery_ramdisk).tmp RECOVERY > $@
++endif
+ 
+ ifndef BOARD_CUSTOM_BOOTIMG_MK
+ $(INSTALLED_RECOVERYIMAGE_TARGET): $(MKBOOTIMG) $(recovery_ramdisk) \
+@@ -1531,6 +1542,11 @@ ifdef BOARD_RAMDISK_OFFSET
+ endif
+ ifeq ($(strip $(BOARD_KERNEL_SEPARATED_DT)),true)
+ 	$(hide) $(ACP) $(INSTALLED_DTIMAGE_TARGET) $(zip_root)/RECOVERY/dt
++endif
++ifdef TARGET_USE_BUILT_BOOTIMAGE
++	@# Copy boot.img to bootable_images
++	$(hide) mkdir -p $(zip_root)/BOOTABLE_IMAGES
++	$(hide) $(ACP) $(INSTALLED_BOOTIMAGE_TARGET) $(zip_root)/BOOTABLE_IMAGES
+ endif
+ 	@# Components of the boot image
+ 	$(hide) mkdir -p $(zip_root)/BOOT
+-- 
+2.15.1
+

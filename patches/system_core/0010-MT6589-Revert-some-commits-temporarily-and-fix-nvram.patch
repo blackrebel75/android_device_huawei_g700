@@ -1,0 +1,72 @@
+From f303ba6986b702ffa56c525760352dcfae54bca9 Mon Sep 17 00:00:00 2001
+From: Kashif Minhaj <dailypctips@gmail.com>
+Date: Sun, 14 Dec 2014 09:04:51 -0500
+Subject: [PATCH 10/27] MT6589: Revert some commits temporarily and fix nvram
+ permissions
+
+Change-Id: I4a8f940fd07729fd22e7b031ee4d65fe4cb57b8e
+---
+ include/private/android_filesystem_config.h | 4 ++++
+ include/utils/CallStack.h                   | 4 ++--
+ libutils/CallStack.cpp                      | 4 ++--
+ 3 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/include/private/android_filesystem_config.h b/include/private/android_filesystem_config.h
+index b14be945..3fc781a6 100644
+--- a/include/private/android_filesystem_config.h
++++ b/include/private/android_filesystem_config.h
+@@ -201,6 +201,10 @@ static const struct android_id_info android_ids[] = {
+     { "sensors",       AID_SENSORS, },
+     { "rfs",           AID_RFS, },
+     { "rfs_shared",    AID_RFS_SHARED, },
++#endif
++#ifdef MTK_G_MT6589
++    { "ccci", AID_CCCI, },
++    { "nvram", AID_NVRAM, },
+ #endif
+     { "everybody",     AID_EVERYBODY, },
+     { "misc",          AID_MISC, },
+diff --git a/include/utils/CallStack.h b/include/utils/CallStack.h
+index a7289859..27fbb12d 100644
+--- a/include/utils/CallStack.h
++++ b/include/utils/CallStack.h
+@@ -50,12 +50,12 @@ public:
+     void log(const char* logtag,
+              android_LogPriority priority = ANDROID_LOG_DEBUG,
+              const char* prefix = 0) const;
+-#ifdef MTK_MT6589
++/*#ifdef MTK_MT6589
+     void update(int32_t ignoreDepth=1, int32_t maxDepth=MAX_DEPTH);
+ 
+     // Dump a stack trace to the log
+     void dump(const char* prefix = 0) const;
+-#endif
++#endif*/
+ 
+     // Dump a stack trace to the log using the supplied logtag
+     void dump(const char* logtag, const char* prefix = 0) const;
+diff --git a/libutils/CallStack.cpp b/libutils/CallStack.cpp
+index e0c06516..0d825b21 100644
+--- a/libutils/CallStack.cpp
++++ b/libutils/CallStack.cpp
+@@ -54,7 +54,7 @@ void CallStack::log(const char* logtag, android_LogPriority priority, const char
+     print(printer);
+ }
+ 
+-#ifdef MTK_MT6589
++/*#ifdef MTK_MT6589
+ void CallStack::update(int32_t ignoreDepth, int32_t maxDepth) {
+     update(ignoreDepth, maxDepth, CURRENT_THREAD);
+ }
+@@ -71,7 +71,7 @@ void CallStack::dump(const char* prefix) const {
+     }
+     free_backtrace_symbols(symbols, mCount);
+ }
+-#endif
++#endif*/
+ 
+ void CallStack::dump(int fd, int indent, const char* prefix) const {
+     FdPrinter printer(fd, indent, prefix);
+-- 
+2.15.1
+

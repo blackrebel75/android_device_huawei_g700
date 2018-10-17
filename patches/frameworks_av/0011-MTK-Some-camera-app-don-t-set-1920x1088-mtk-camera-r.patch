@@ -1,0 +1,51 @@
+From 0a7dac5a60b3123dcfc444fe5e937eed34387c9f Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:56:03 +0200
+Subject: [PATCH 11/18] [MTK] Some camera app don't set 1920x1088 mtk camera
+ resolution and we get a fatal error: get a hack!
+
+---
+ media/libstagefright/CameraSource.cpp   | 7 +++++++
+ media/libstagefright/MPEG4Extractor.cpp | 8 ++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/media/libstagefright/CameraSource.cpp b/media/libstagefright/CameraSource.cpp
+index b3be4718a..79d8b5039 100644
+--- a/media/libstagefright/CameraSource.cpp
++++ b/media/libstagefright/CameraSource.cpp
+@@ -396,6 +396,13 @@ status_t CameraSource::configureCamera(
+             return BAD_VALUE;
+         }
+ #endif
++#ifdef MTK_HARDWARE
++// fix wrong height size for fullHD video rec
++if (height == 1072) {
++   height = 1080;
++        ALOGD("Adjust height size (1072) for mtk camera (%dx%d)", width, height);
++}
++#endif  
+         if (isSetVideoSizeSupportedByCamera) {
+             params->setVideoSize(width, height);
+         } else {
+diff --git a/media/libstagefright/MPEG4Extractor.cpp b/media/libstagefright/MPEG4Extractor.cpp
+index 73147ee35..ddf0672b0 100644
+--- a/media/libstagefright/MPEG4Extractor.cpp
++++ b/media/libstagefright/MPEG4Extractor.cpp
+@@ -1738,6 +1738,14 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
+             size_t max_size;
+             err = mLastTrack->sampleTable->getMaxSampleSize(&max_size);
+ 
++#ifndef ANDROID_DEFAULT_CODE//hai.li for ISSUE: ALPS35871
++      if (max_size > 1920*1088*3/2)        // maybe some abnormal size
++	    {
++		     //mLastTrack->skipTrack = true;
++          max_size=1920*1088*3/2;
++		      ALOGE("ERROR: Sample size may be wrong!set maxSize as:%d",max_size);
++	    }
++#endif
+             if (err != OK) {
+                 return err;
+             }
+-- 
+2.15.1
+

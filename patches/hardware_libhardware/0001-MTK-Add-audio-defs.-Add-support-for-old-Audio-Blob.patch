@@ -1,0 +1,88 @@
+From 1af28aca155edec0ecfda9702b805ecb41c28752 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 1 Feb 2018 16:10:47 +0100
+Subject: [PATCH 1/4] [MTK] Add audio defs. Add support for old Audio Blob
+
+---
+ include/hardware/audio.h         | 29 +++++++++++++++++++++++++++++
+ include/hardware/audio_policy.h  |  4 ++++
+ include/hardware/camera_common.h |  2 +-
+ 3 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/include/hardware/audio.h b/include/hardware/audio.h
+index c3cb740..18a25b4 100644
+--- a/include/hardware/audio.h
++++ b/include/hardware/audio.h
+@@ -753,6 +753,35 @@ struct audio_hw_device {
+     int (*listen_set_parameters)(struct audio_hw_device *dev,
+                                  const char *kv_pairs);
+ #endif
++
++#ifdef MTK_HARDWARE
++    /**  add by chipeng to fit hardware extension   **/
++    int (*SetEMParameter)(struct audio_hw_device *dev,void *ptr , int len);
++    int (*GetEMParameter)(struct audio_hw_device *dev,void *ptr , int len);
++    int (*SetAudioCommand)(struct audio_hw_device *dev,int par1 , int par2);
++    int (*GetAudioCommand)(struct audio_hw_device *dev,int par1);
++    int (*SetAudioData)(struct audio_hw_device *dev,int par1,size_t len,void *ptr);
++    int (*GetAudioData)(struct audio_hw_device *dev,int par1,size_t len,void *ptr);
++    int (*SetACFPreviewParameter)(struct audio_hw_device *dev,void *ptr , int len);
++    int (*SetHCFPreviewParameter)(struct audio_hw_device *dev,void *ptr , int len);
++
++    int (*xWayPlay_Start)(struct audio_hw_device *dev,int sample_rate);
++    int (*xWayPlay_Stop)(struct audio_hw_device *dev);
++    int (*xWayPlay_Write)(struct audio_hw_device *dev,void* buffer ,int size_bytes);
++    int (*xWayPlay_GetFreeBufferCount)(struct audio_hw_device *dev);
++    int (*xWayRec_Start)(struct audio_hw_device *dev,int smple_rate);
++    int (*xWayRec_Stop)(struct audio_hw_device *dev);
++    int (*xWayRec_Read)(struct audio_hw_device *dev,void* buffer , int size_bytes);
++    //added by wendy
++    int (*ReadRefFromRing)(struct audio_hw_device* dev, void*buf, uint32_t datasz, void* DLtime);
++    int (*GetVoiceUnlockULTime)(struct audio_hw_device* dev, void* ULtime);
++    int (*SetVoiceUnlockSRC)(struct audio_hw_device* dev, uint outSR, uint outChannel);
++    bool (*startVoiceUnlockDL)(struct audio_hw_device* dev);
++    bool (*stopVoiceUnlockDL)(struct audio_hw_device* dev);
++    void (*freeVoiceUnlockDLInstance)(struct audio_hw_device* dev);
++    bool (*getVoiceUnlockDLInstance)(struct audio_hw_device* dev);
++    int (* GetVoiceUnlockDLLatency)(struct audio_hw_device* dev);
++#endif
+ };
+ typedef struct audio_hw_device audio_hw_device_t;
+ 
+diff --git a/include/hardware/audio_policy.h b/include/hardware/audio_policy.h
+index 99cb044..84827e6 100644
+--- a/include/hardware/audio_policy.h
++++ b/include/hardware/audio_policy.h
+@@ -233,12 +233,16 @@ struct audio_policy {
+             audio_stream_type_t stream,
+             uint32_t in_past_ms);
+ 
++#ifndef ICS_AUDIO_BLOB
++#ifndef MR1_AUDIO_BLOB
+     bool (*is_stream_active_remotely)(const struct audio_policy *pol,
+             audio_stream_type_t stream,
+             uint32_t in_past_ms);
++#endif
+ 
+     bool (*is_source_active)(const struct audio_policy *pol,
+             audio_source_t source);
++#endif
+ 
+     /* dump state */
+     int (*dump)(const struct audio_policy *pol, int fd);
+diff --git a/include/hardware/camera_common.h b/include/hardware/camera_common.h
+index af9d9da..965086c 100644
+--- a/include/hardware/camera_common.h
++++ b/include/hardware/camera_common.h
+@@ -189,7 +189,7 @@ typedef struct camera_info {
+      */
+     const camera_metadata_t *static_camera_characteristics;
+ 
+-} _camera_info_t;
++} camera_info_t;
+ 
+ /**
+  * camera_device_status_t:
+-- 
+2.15.1
+

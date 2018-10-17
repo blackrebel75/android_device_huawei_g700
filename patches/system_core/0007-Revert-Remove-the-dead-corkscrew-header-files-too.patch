@@ -1,0 +1,478 @@
+From 41048172dfc21c0bf79b8659d973a610af8d0ee8 Mon Sep 17 00:00:00 2001
+From: Kyle Repinski <repinski23@gmail.com>
+Date: Tue, 4 Nov 2014 00:49:19 -0600
+Subject: [PATCH 07/27] Revert "Remove the dead corkscrew header files too."
+
+This reverts commit ddbdae8c3f24a6e5afb3b45bf73cdad3dae9abaa.
+
+Change-Id: I5934aa8092af79b90b3b3524f78480c9f5b8fd99
+---
+ include/corkscrew/backtrace.h    | 115 +++++++++++++++++++++++++++++++++
+ include/corkscrew/demangle.h     |  42 ++++++++++++
+ include/corkscrew/map_info.h     |  74 +++++++++++++++++++++
+ include/corkscrew/ptrace.h       | 134 +++++++++++++++++++++++++++++++++++++++
+ include/corkscrew/symbol_table.h |  59 +++++++++++++++++
+ 5 files changed, 424 insertions(+)
+ create mode 100644 include/corkscrew/backtrace.h
+ create mode 100644 include/corkscrew/demangle.h
+ create mode 100644 include/corkscrew/map_info.h
+ create mode 100644 include/corkscrew/ptrace.h
+ create mode 100644 include/corkscrew/symbol_table.h
+
+diff --git a/include/corkscrew/backtrace.h b/include/corkscrew/backtrace.h
+new file mode 100644
+index 00000000..556ad04c
+--- /dev/null
++++ b/include/corkscrew/backtrace.h
+@@ -0,0 +1,115 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* A stack unwinder. */
++
++#ifndef _CORKSCREW_BACKTRACE_H
++#define _CORKSCREW_BACKTRACE_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include <sys/types.h>
++#include <corkscrew/ptrace.h>
++#include <corkscrew/map_info.h>
++#include <corkscrew/symbol_table.h>
++
++/*
++ * Describes a single frame of a backtrace.
++ */
++typedef struct {
++    uintptr_t absolute_pc;     /* absolute PC offset */
++    uintptr_t stack_top;       /* top of stack for this frame */
++    size_t stack_size;         /* size of this stack frame */
++} backtrace_frame_t;
++
++/*
++ * Describes the symbols associated with a backtrace frame.
++ */
++typedef struct {
++    uintptr_t relative_pc;       /* relative frame PC offset from the start of the library,
++                                    or the absolute PC if the library is unknown */
++    uintptr_t relative_symbol_addr; /* relative offset of the symbol from the start of the
++                                    library or 0 if the library is unknown */
++    char* map_name;              /* executable or library name, or NULL if unknown */
++    char* symbol_name;           /* symbol name, or NULL if unknown */
++    char* demangled_name;        /* demangled symbol name, or NULL if unknown */
++} backtrace_symbol_t;
++
++/*
++ * Unwinds the call stack for the current thread of execution.
++ * Populates the backtrace array with the program counters from the call stack.
++ * Returns the number of frames collected, or -1 if an error occurred.
++ */
++ssize_t unwind_backtrace(backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth);
++
++/*
++ * Unwinds the call stack for a thread within this process.
++ * Populates the backtrace array with the program counters from the call stack.
++ * Returns the number of frames collected, or -1 if an error occurred.
++ *
++ * The task is briefly suspended while the backtrace is being collected.
++ */
++ssize_t unwind_backtrace_thread(pid_t tid, backtrace_frame_t* backtrace,
++        size_t ignore_depth, size_t max_depth);
++
++/*
++ * Unwinds the call stack of a task within a remote process using ptrace().
++ * Populates the backtrace array with the program counters from the call stack.
++ * Returns the number of frames collected, or -1 if an error occurred.
++ */
++ssize_t unwind_backtrace_ptrace(pid_t tid, const ptrace_context_t* context,
++        backtrace_frame_t* backtrace, size_t ignore_depth, size_t max_depth);
++
++/*
++ * Gets the symbols for each frame of a backtrace.
++ * The symbols array must be big enough to hold one symbol record per frame.
++ * The symbols must later be freed using free_backtrace_symbols.
++ */
++void get_backtrace_symbols(const backtrace_frame_t* backtrace, size_t frames,
++        backtrace_symbol_t* backtrace_symbols);
++
++/*
++ * Gets the symbols for each frame of a backtrace from a remote process.
++ * The symbols array must be big enough to hold one symbol record per frame.
++ * The symbols must later be freed using free_backtrace_symbols.
++ */
++void get_backtrace_symbols_ptrace(const ptrace_context_t* context,
++        const backtrace_frame_t* backtrace, size_t frames,
++        backtrace_symbol_t* backtrace_symbols);
++
++/*
++ * Frees the storage associated with backtrace symbols.
++ */
++void free_backtrace_symbols(backtrace_symbol_t* backtrace_symbols, size_t frames);
++
++enum {
++    // A hint for how big to make the line buffer for format_backtrace_line
++    MAX_BACKTRACE_LINE_LENGTH = 800,
++};
++
++/**
++ * Formats a line from a backtrace as a zero-terminated string into the specified buffer.
++ */
++void format_backtrace_line(unsigned frameNumber, const backtrace_frame_t* frame,
++        const backtrace_symbol_t* symbol, char* buffer, size_t bufferSize);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_BACKTRACE_H
+diff --git a/include/corkscrew/demangle.h b/include/corkscrew/demangle.h
+new file mode 100644
+index 00000000..04b02255
+--- /dev/null
++++ b/include/corkscrew/demangle.h
+@@ -0,0 +1,42 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* C++ symbol name demangling. */
++
++#ifndef _CORKSCREW_DEMANGLE_H
++#define _CORKSCREW_DEMANGLE_H
++
++#include <sys/types.h>
++#include <stdbool.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/*
++ * Demangles a C++ symbol name.
++ * If name is NULL or if the name cannot be demangled, returns NULL.
++ * Otherwise, returns a newly allocated string that contains the demangled name.
++ *
++ * The caller must free the returned string using free().
++ */
++char* demangle_symbol_name(const char* name);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_DEMANGLE_H
+diff --git a/include/corkscrew/map_info.h b/include/corkscrew/map_info.h
+new file mode 100644
+index 00000000..14bfad67
+--- /dev/null
++++ b/include/corkscrew/map_info.h
+@@ -0,0 +1,74 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* Process memory map. */
++
++#ifndef _CORKSCREW_MAP_INFO_H
++#define _CORKSCREW_MAP_INFO_H
++
++#include <sys/types.h>
++#include <stdbool.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct map_info {
++    struct map_info* next;
++    uintptr_t start;
++    uintptr_t end;
++    bool is_readable;
++    bool is_writable;
++    bool is_executable;
++    void* data; // arbitrary data associated with the map by the user, initially NULL
++    char name[];
++} map_info_t;
++
++/* Loads memory map from /proc/<tid>/maps. */
++map_info_t* load_map_info_list(pid_t tid);
++
++/* Frees memory map. */
++void free_map_info_list(map_info_t* milist);
++
++/* Finds the memory map that contains the specified address. */
++const map_info_t* find_map_info(const map_info_t* milist, uintptr_t addr);
++
++/* Returns true if the addr is in a readable map. */
++bool is_readable_map(const map_info_t* milist, uintptr_t addr);
++/* Returns true if the addr is in a writable map. */
++bool is_writable_map(const map_info_t* milist, uintptr_t addr);
++/* Returns true if the addr is in an executable map. */
++bool is_executable_map(const map_info_t* milist, uintptr_t addr);
++
++/* Acquires a reference to the memory map for this process.
++ * The result is cached and refreshed automatically.
++ * Make sure to release the map info when done. */
++map_info_t* acquire_my_map_info_list();
++
++/* Releases a reference to the map info for this process that was
++ * previous acquired using acquire_my_map_info_list(). */
++void release_my_map_info_list(map_info_t* milist);
++
++/* Flushes the cached memory map so the next call to
++ * acquire_my_map_info_list() gets fresh data. */
++void flush_my_map_info_list();
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_MAP_INFO_H
+diff --git a/include/corkscrew/ptrace.h b/include/corkscrew/ptrace.h
+new file mode 100644
+index 00000000..76276d89
+--- /dev/null
++++ b/include/corkscrew/ptrace.h
+@@ -0,0 +1,134 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++/* Useful ptrace() utility functions. */
++
++#ifndef _CORKSCREW_PTRACE_H
++#define _CORKSCREW_PTRACE_H
++
++#include <corkscrew/map_info.h>
++#include <corkscrew/symbol_table.h>
++
++#include <sys/types.h>
++#include <stdbool.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Stores information about a process that is used for several different
++ * ptrace() based operations. */
++typedef struct {
++    map_info_t* map_info_list;
++} ptrace_context_t;
++
++/* Describes how to access memory from a process. */
++typedef struct {
++    pid_t tid;
++    const map_info_t* map_info_list;
++} memory_t;
++
++#if __i386__
++/* ptrace() register context. */
++typedef struct pt_regs_x86 {
++    uint32_t ebx;
++    uint32_t ecx;
++    uint32_t edx;
++    uint32_t esi;
++    uint32_t edi;
++    uint32_t ebp;
++    uint32_t eax;
++    uint32_t xds;
++    uint32_t xes;
++    uint32_t xfs;
++    uint32_t xgs;
++    uint32_t orig_eax;
++    uint32_t eip;
++    uint32_t xcs;
++    uint32_t eflags;
++    uint32_t esp;
++    uint32_t xss;
++} pt_regs_x86_t;
++#endif
++
++#if __mips__
++/* ptrace() GET_REGS context. */
++typedef struct pt_regs_mips {
++    uint64_t regs[32];
++    uint64_t lo;
++    uint64_t hi;
++    uint64_t cp0_epc;
++    uint64_t cp0_badvaddr;
++    uint64_t cp0_status;
++    uint64_t cp0_cause;
++} pt_regs_mips_t;
++#endif
++
++/*
++ * Initializes a memory structure for accessing memory from this process.
++ */
++void init_memory(memory_t* memory, const map_info_t* map_info_list);
++
++/*
++ * Initializes a memory structure for accessing memory from another process
++ * using ptrace().
++ */
++void init_memory_ptrace(memory_t* memory, pid_t tid);
++
++/*
++ * Reads a word of memory safely.
++ * If the memory is local, ensures that the address is readable before dereferencing it.
++ * Returns false and a value of 0xffffffff if the word could not be read.
++ */
++bool try_get_word(const memory_t* memory, uintptr_t ptr, uint32_t* out_value);
++
++/*
++ * Reads a word of memory safely using ptrace().
++ * Returns false and a value of 0xffffffff if the word could not be read.
++ */
++bool try_get_word_ptrace(pid_t tid, uintptr_t ptr, uint32_t* out_value);
++
++/*
++ * Loads information needed for examining a remote process using ptrace().
++ * The caller must already have successfully attached to the process
++ * using ptrace().
++ *
++ * The context can be used for any threads belonging to that process
++ * assuming ptrace() is attached to them before performing the actual
++ * unwinding.  The context can continue to be used to decode backtraces
++ * even after ptrace() has been detached from the process.
++ */
++ptrace_context_t* load_ptrace_context(pid_t pid);
++
++/*
++ * Frees a ptrace context.
++ */
++void free_ptrace_context(ptrace_context_t* context);
++
++/*
++ * Finds a symbol using ptrace.
++ * Returns the containing map and information about the symbol, or
++ * NULL if one or the other is not available.
++ */
++void find_symbol_ptrace(const ptrace_context_t* context,
++        uintptr_t addr, const map_info_t** out_map_info, const symbol_t** out_symbol);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_PTRACE_H
+diff --git a/include/corkscrew/symbol_table.h b/include/corkscrew/symbol_table.h
+new file mode 100644
+index 00000000..4998750b
+--- /dev/null
++++ b/include/corkscrew/symbol_table.h
+@@ -0,0 +1,59 @@
++/*
++ * Copyright (C) 2011 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef _CORKSCREW_SYMBOL_TABLE_H
++#define _CORKSCREW_SYMBOL_TABLE_H
++
++#include <stdint.h>
++#include <sys/types.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct {
++    uintptr_t start;
++    uintptr_t end;
++    char* name;
++} symbol_t;
++
++typedef struct {
++    symbol_t* symbols;
++    size_t num_symbols;
++} symbol_table_t;
++
++/*
++ * Loads a symbol table from a given file.
++ * Returns NULL on error.
++ */
++symbol_table_t* load_symbol_table(const char* filename);
++
++/*
++ * Frees a symbol table.
++ */
++void free_symbol_table(symbol_table_t* table);
++
++/*
++ * Finds a symbol associated with an address in the symbol table.
++ * Returns NULL if not found.
++ */
++const symbol_t* find_symbol(const symbol_table_t* table, uintptr_t addr);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _CORKSCREW_SYMBOL_TABLE_H
+-- 
+2.15.1
+

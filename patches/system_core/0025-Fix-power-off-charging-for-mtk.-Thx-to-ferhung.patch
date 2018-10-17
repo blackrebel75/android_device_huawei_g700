@@ -1,0 +1,133 @@
+From 26ae1e10526065f717d542be73cfdeab11a0e0c1 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Sun, 11 Feb 2018 15:56:43 +0100
+Subject: [PATCH 25/27] Fix power off charging for mtk. Thx to @ferhung.
+
+---
+ healthd/Android.mk                | 18 +++++++++++++++++-
+ healthd/healthd.h                 | 15 +++++++++++++++
+ healthd/healthd_board_default.cpp | 21 +++++++++++++++++++--
+ init/init.c                       |  2 +-
+ 4 files changed, 52 insertions(+), 4 deletions(-)
+
+diff --git a/healthd/Android.mk b/healthd/Android.mk
+index 37e5490c..260f7e24 100644
+--- a/healthd/Android.mk
++++ b/healthd/Android.mk
+@@ -5,11 +5,19 @@ ifneq ($(BUILD_TINY_ANDROID),true)
+ LOCAL_PATH := $(call my-dir)
+ 
+ include $(CLEAR_VARS)
+-LOCAL_SRC_FILES := healthd_board_default.cpp healthd_msm_alarm.cpp
++LOCAL_SRC_FILES := healthd_board_default.cpp
+ LOCAL_MODULE := libhealthd.default
+ LOCAL_CFLAGS := -Werror
+ include $(BUILD_STATIC_LIBRARY)
+ 
++ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
++include $(CLEAR_VARS)
++LOCAL_SRC_FILES := healthd_msm_alarm.cpp
++LOCAL_MODULE := libhealthd.qcom
++LOCAL_CFLAGS := -Werror
++include $(BUILD_STATIC_LIBRARY)
++endif
++
+ include $(CLEAR_VARS)
+ 
+ LOCAL_SRC_FILES := \
+@@ -67,6 +75,14 @@ endif
+ 
+ LOCAL_HAL_STATIC_LIBRARIES := libhealthd
+ 
++ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
++BOARD_HAL_STATIC_LIBRARIES ?= libhealthd.qcom
++endif
++
++ifeq ($(BOARD_HAS_MTK_HARDWARE),true)
++BOARD_HAL_STATIC_LIBRARIES ?= libhealthd.mtk
++endif
++
+ # Symlink /charger to /sbin/healthd
+ LOCAL_POST_INSTALL_CMD := $(hide) mkdir -p $(TARGET_ROOT_OUT) \
+     && rm -f $(TARGET_ROOT_OUT)/charger && ln -sf /sbin/healthd $(TARGET_ROOT_OUT)/charger
+diff --git a/healthd/healthd.h b/healthd/healthd.h
+index 2cbdabf3..a8dbde92 100644
+--- a/healthd/healthd.h
++++ b/healthd/healthd.h
+@@ -158,5 +158,20 @@ void healthd_board_init(struct healthd_config *config);
+ // is to be logged, or non-zero to prevent logging this information.
+ 
+ int healthd_board_battery_update(struct android::BatteryProperties *props);
++//This API is called to turn on/off the display backlight incase it can't be
++//handle correcty in the display driver by calling gr_fg_blank();
++void healthd_board_mode_charger_set_backlight(bool en);
++
++//This API is called to update the battery/charging status by using the user
++//noticeable method other then the animation, such as: LEDs
++void healthd_board_mode_charger_battery_update(struct android::BatteryProperties *batt_prop);
++
++//This API is used to handle some board specific charger mode initialization,
++//such as: checking the charging is enabled or not.
++void healthd_board_mode_charger_init(void);
++
++//This API is called in the draw_battery() function to draw more infomation
++//about the battery on the animation, such as the SoC (State of Charge).
++void healthd_board_mode_charger_draw_battery(struct android::BatteryProperties *batt_prop);
+ 
+ #endif /* _HEALTHD_H_ */
+diff --git a/healthd/healthd_board_default.cpp b/healthd/healthd_board_default.cpp
+index 3d073627..660f2709 100644
+--- a/healthd/healthd_board_default.cpp
++++ b/healthd/healthd_board_default.cpp
+@@ -15,12 +15,10 @@
+  */
+ 
+ #include <healthd.h>
+-#include "healthd_msm.h"
+ 
+ void healthd_board_init(struct healthd_config*)
+ {
+     // use defaults
+-    power_off_alarm_init();
+ }
+ 
+ 
+@@ -29,3 +27,22 @@ int healthd_board_battery_update(struct android::BatteryProperties*)
+     // return 0 to log periodic polled battery status to kernel log
+     return 1;
+ }
++
++void healthd_board_mode_charger_draw_battery(struct android::BatteryProperties*)
++{
++
++}
++
++void healthd_board_mode_charger_battery_update(struct android::BatteryProperties*)
++{
++
++}
++
++void healthd_board_mode_charger_set_backlight(bool)
++{
++
++}
++
++void healthd_board_mode_charger_init()
++{
++}
+diff --git a/init/init.c b/init/init.c
+index 2beeaaaf..9be8fcac 100644
+--- a/init/init.c
++++ b/init/init.c
+@@ -1077,7 +1077,7 @@ static int charging_mode_booting(void)
+         return 0;
+ 
+     close(f);
+-    return ('1' == cmb);
++    return ('8' == cmb);
+ #endif
+ }
+ 
+-- 
+2.15.1
+

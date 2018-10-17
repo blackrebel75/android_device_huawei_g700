@@ -1,0 +1,164 @@
+From 1346cb14e3e0fb79c276cff51fb49b2d323ff943 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Fri, 24 Mar 2017 15:27:51 +0100
+Subject: [PATCH] Compat for icu in Android 5.0 for support some old drivers
+
+Change-Id: I3b52eff9a968c70805a87a377a66c0940c962873
+---
+ icu4c/source/common/ucnv.c | 140 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 140 insertions(+)
+
+diff --git a/icu4c/source/common/ucnv.c b/icu4c/source/common/ucnv.c
+index 5cf4d15c..15a77e7f 100644
+--- a/icu4c/source/common/ucnv.c
++++ b/icu4c/source/common/ucnv.c
+@@ -2914,6 +2914,146 @@ ucnv_isFixedWidth(UConverter *cnv, UErrorCode *status){
+             return FALSE;
+     }
+ }
++
++
++U_CAPI void    U_EXPORT2 ucnv_setToUCallBack_48 (UConverter * converter,
++                            UConverterToUCallback newAction,
++                            const void* newContext,
++                            UConverterToUCallback *oldAction,
++                            const void** oldContext,
++                            UErrorCode * err) {
++  ucnv_setToUCallBack(converter, newAction, newContext,
++        oldAction, oldContext, err);
++}
++
++U_CAPI void  U_EXPORT2 ucnv_close_48 (UConverter * converter) {
++  ucnv_close (converter);
++}
++
++U_CAPI void  U_EXPORT2
++ucnv_setFromUCallBack_48 (UConverter * converter,
++                            UConverterFromUCallback newAction,
++                            const void* newContext,
++                            UConverterFromUCallback *oldAction,
++                            const void** oldContext,
++                            UErrorCode * err) {
++
++  ucnv_setFromUCallBack(converter, newAction, newContext, oldAction,
++        oldContext, err);
++}
++
++U_CAPI void U_EXPORT2
++ucnv_convertEx_48 (UConverter *targetCnv, UConverter *sourceCnv,
++               char **target, const char *targetLimit,
++               const char **source, const char *sourceLimit,
++               UChar *pivotStart, UChar **pivotSource,
++               UChar **pivotTarget, const UChar *pivotLimit,
++               UBool reset, UBool flush,
++               UErrorCode *pErrorCode) {
++  ucnv_convertEx(targetCnv, sourceCnv, target, targetLimit, source,
++        sourceLimit, pivotStart, pivotSource,
++        pivotTarget, pivotLimit, reset, flush,
++        pErrorCode);
++}
++
++U_CAPI UConverter* U_EXPORT2
++ucnv_open_48 (const char *name,
++                       UErrorCode * err) {
++  return ucnv_open(name, err);
++}
++
++U_STABLE void U_EXPORT2 UCNV_FROM_U_CALLBACK_STOP_48 (
++                  const void *context,
++                  UConverterFromUnicodeArgs *fromUArgs,
++                  const UChar* codeUnits,
++                  int32_t length,
++                  UChar32 codePoint,
++                  UConverterCallbackReason reason,
++                  UErrorCode * err) {
++  return UCNV_FROM_U_CALLBACK_STOP(context, fromUArgs, codeUnits,
++      length, codePoint, reason, err);
++}
++
++U_STABLE void U_EXPORT2 UCNV_TO_U_CALLBACK_STOP_48 (
++                  const void *context,
++                  UConverterToUnicodeArgs *toUArgs,
++                  const char* codeUnits,
++                  int32_t length,
++                  UConverterCallbackReason reason,
++                  UErrorCode * err) {
++  return UCNV_TO_U_CALLBACK_STOP(context, toUArgs, codeUnits, length,
++      reason, err);
++}
++
++U_CAPI void    U_EXPORT2 ucnv_setToUCallBack_51 (UConverter * converter,
++                            UConverterToUCallback newAction,
++                            const void* newContext,
++                            UConverterToUCallback *oldAction,
++                            const void** oldContext,
++                            UErrorCode * err) {
++  ucnv_setToUCallBack(converter, newAction, newContext,
++        oldAction, oldContext, err);
++}
++
++U_CAPI void  U_EXPORT2 ucnv_close_51 (UConverter * converter) {
++  ucnv_close (converter);
++}
++
++U_CAPI void  U_EXPORT2
++ucnv_setFromUCallBack_51 (UConverter * converter,
++                            UConverterFromUCallback newAction,
++                            const void* newContext,
++                            UConverterFromUCallback *oldAction,
++                            const void** oldContext,
++                            UErrorCode * err) {
++
++  ucnv_setFromUCallBack(converter, newAction, newContext, oldAction,
++        oldContext, err);
++}
++
++U_CAPI void U_EXPORT2
++ucnv_convertEx_51 (UConverter *targetCnv, UConverter *sourceCnv,
++               char **target, const char *targetLimit,
++               const char **source, const char *sourceLimit,
++               UChar *pivotStart, UChar **pivotSource,
++               UChar **pivotTarget, const UChar *pivotLimit,
++               UBool reset, UBool flush,
++               UErrorCode *pErrorCode) {
++  ucnv_convertEx(targetCnv, sourceCnv, target, targetLimit, source,
++        sourceLimit, pivotStart, pivotSource,
++        pivotTarget, pivotLimit, reset, flush,
++        pErrorCode);
++}
++
++U_CAPI UConverter* U_EXPORT2
++ucnv_open_51 (const char *name,
++                       UErrorCode * err) {
++  return ucnv_open(name, err);
++}
++
++U_STABLE void U_EXPORT2 UCNV_FROM_U_CALLBACK_STOP_51 (
++                  const void *context,
++                  UConverterFromUnicodeArgs *fromUArgs,
++                  const UChar* codeUnits,
++                  int32_t length,
++                  UChar32 codePoint,
++                  UConverterCallbackReason reason,
++                  UErrorCode * err) {
++  return UCNV_FROM_U_CALLBACK_STOP(context, fromUArgs, codeUnits,
++      length, codePoint, reason, err);
++}
++
++U_STABLE void U_EXPORT2 UCNV_TO_U_CALLBACK_STOP_51 (
++                  const void *context,
++                  UConverterToUnicodeArgs *toUArgs,
++                  const char* codeUnits,
++                  int32_t length,
++                  UConverterCallbackReason reason,
++                  UErrorCode * err) {
++  return UCNV_TO_U_CALLBACK_STOP(context, toUArgs, codeUnits, length,
++      reason, err);
++}
++
+ #endif
+ 
+ /*
+-- 
+2.15.1
+

@@ -1,0 +1,848 @@
+From 2bccdfd897f134a0a0fe93d1da2fcfe172bfd48e Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 23:26:40 +0200
+Subject: [PATCH 2/8] Remove PerfMeasurement
+
+Former-commit-id: ec158d72391a3a2d7aab48c622232e33e2c26d32
+---
+ .../hardware/camera2/legacy/PerfMeasurement.java   | 309 -------------------
+ .../camera2/legacy/SurfaceTextureRenderer.java     |  82 -----
+ core/jni/Android.mk                                |   1 -
+ core/jni/AndroidRuntime.cpp                        |   2 -
+ ...oid_hardware_camera2_legacy_PerfMeasurement.cpp | 335 ---------------------
+ 5 files changed, 729 deletions(-)
+ delete mode 100644 core/java/android/hardware/camera2/legacy/PerfMeasurement.java
+ delete mode 100644 core/jni/android_hardware_camera2_legacy_PerfMeasurement.cpp
+
+diff --git a/core/java/android/hardware/camera2/legacy/PerfMeasurement.java b/core/java/android/hardware/camera2/legacy/PerfMeasurement.java
+deleted file mode 100644
+index b930ec26f02..00000000000
+--- a/core/java/android/hardware/camera2/legacy/PerfMeasurement.java
++++ /dev/null
+@@ -1,309 +0,0 @@
+-/*
+- * Copyright (C) 2014 The Android Open Source Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package android.hardware.camera2.legacy;
+-
+-import android.os.SystemClock;
+-import android.util.Log;
+-
+-import java.io.BufferedWriter;
+-import java.io.File;
+-import java.io.FileWriter;
+-import java.io.IOException;
+-import java.util.ArrayList;
+-import java.util.LinkedList;
+-import java.util.Queue;
+-
+-/**
+- * GPU and CPU performance measurement for the legacy implementation.
+- *
+- * <p>Measures CPU and GPU processing duration for a set of operations, and dumps
+- * the results into a file.</p>
+- *
+- * <p>Rough usage:
+- * <pre>
+- * {@code
+- *   <set up workload>
+- *   <start long-running workload>
+- *   mPerfMeasurement.startTimer();
+- *   ...render a frame...
+- *   mPerfMeasurement.stopTimer();
+- *   <end workload>
+- *   mPerfMeasurement.dumpPerformanceData("/sdcard/my_data.txt");
+- * }
+- * </pre>
+- * </p>
+- *
+- * <p>All calls to this object must be made within the same thread, and the same GL context.
+- * PerfMeasurement cannot be used outside of a GL context.  The only exception is
+- * dumpPerformanceData, which can be called outside of a valid GL context.</p>
+- */
+-class PerfMeasurement {
+-    private static final String TAG = "PerfMeasurement";
+-
+-    public static final int DEFAULT_MAX_QUERIES = 3;
+-
+-    private final long mNativeContext;
+-
+-    private int mCompletedQueryCount = 0;
+-
+-    /**
+-     * Values for completed measurements
+-     */
+-    private ArrayList<Long> mCollectedGpuDurations = new ArrayList<>();
+-    private ArrayList<Long> mCollectedCpuDurations = new ArrayList<>();
+-    private ArrayList<Long> mCollectedTimestamps = new ArrayList<>();
+-
+-    /**
+-     * Values for in-progress measurements (waiting for async GPU results)
+-     */
+-    private Queue<Long> mTimestampQueue = new LinkedList<>();
+-    private Queue<Long> mCpuDurationsQueue = new LinkedList<>();
+-
+-    private long mStartTimeNs;
+-
+-    /**
+-     * The value returned by {@link #nativeGetNextGlDuration} if no new timing
+-     * measurement is available since the last call.
+-     */
+-    private static final long NO_DURATION_YET = -1l;
+-
+-    /**
+-     * The value returned by {@link #nativeGetNextGlDuration} if timing failed for
+-     * the next timing interval
+-     */
+-    private static final long FAILED_TIMING = -2l;
+-
+-    /**
+-     * Create a performance measurement object with a maximum of {@value #DEFAULT_MAX_QUERIES}
+-     * in-progess queries.
+-     */
+-    public PerfMeasurement() {
+-        mNativeContext = nativeCreateContext(DEFAULT_MAX_QUERIES);
+-    }
+-
+-    /**
+-     * Create a performance measurement object with maxQueries as the maximum number of
+-     * in-progress queries.
+-     *
+-     * @param maxQueries maximum in-progress queries, must be larger than 0.
+-     * @throws IllegalArgumentException if maxQueries is less than 1.
+-     */
+-    public PerfMeasurement(int maxQueries) {
+-        if (maxQueries < 1) throw new IllegalArgumentException("maxQueries is less than 1");
+-        mNativeContext = nativeCreateContext(maxQueries);
+-    }
+-
+-    /**
+-     * Returns true if the Gl timing methods will work, false otherwise.
+-     *
+-     * <p>Must be called within a valid GL context.</p>
+-     */
+-    public static boolean isGlTimingSupported() {
+-        return nativeQuerySupport();
+-    }
+-
+-    /**
+-     * Dump collected data to file, and clear the stored data.
+-     *
+-     * <p>
+-     * Format is a simple csv-like text file with a header,
+-     * followed by a 3-column list of values in nanoseconds:
+-     * <pre>
+-     *   timestamp gpu_duration cpu_duration
+-     *   <long> <long> <long>
+-     *   <long> <long> <long>
+-     *   <long> <long> <long>
+-     *   ....
+-     * </pre>
+-     * </p>
+-     */
+-    public void dumpPerformanceData(String path) {
+-        try (BufferedWriter dump = new BufferedWriter(new FileWriter(path))) {
+-            dump.write("timestamp gpu_duration cpu_duration\n");
+-            for (int i = 0; i < mCollectedGpuDurations.size(); i++) {
+-                dump.write(String.format("%d %d %d\n",
+-                                mCollectedTimestamps.get(i),
+-                                mCollectedGpuDurations.get(i),
+-                                mCollectedCpuDurations.get(i)));
+-            }
+-            mCollectedTimestamps.clear();
+-            mCollectedGpuDurations.clear();
+-            mCollectedCpuDurations.clear();
+-        } catch (IOException e) {
+-            Log.e(TAG, "Error writing data dump to " + path + ":" + e);
+-        }
+-    }
+-
+-    /**
+-     * Start a GPU/CPU timing measurement.
+-     *
+-     * <p>Call before starting a rendering pass. Only one timing measurement can be active at once,
+-     * so {@link #stopTimer} must be called before the next call to this method.</p>
+-     *
+-     * @throws IllegalStateException if the maximum number of queries are in progress already,
+-     *                               or the method is called multiple times in a row, or there is
+-     *                               a GPU error.
+-     */
+-    public void startTimer() {
+-        nativeStartGlTimer(mNativeContext);
+-        mStartTimeNs = SystemClock.elapsedRealtimeNanos();
+-    }
+-
+-    /**
+-     * Finish a GPU/CPU timing measurement.
+-     *
+-     * <p>Call after finishing all the drawing for a rendering pass. Only one timing measurement can
+-     * be active at once, so {@link #startTimer} must be called before the next call to this
+-     * method.</p>
+-     *
+-     * @throws IllegalStateException if no GL timer is currently started, or there is a GPU
+-     *                               error.
+-     */
+-    public void stopTimer() {
+-        // Complete CPU timing
+-        long endTimeNs = SystemClock.elapsedRealtimeNanos();
+-        mCpuDurationsQueue.add(endTimeNs - mStartTimeNs);
+-        // Complete GL timing
+-        nativeStopGlTimer(mNativeContext);
+-
+-        // Poll to see if GL timing results have arrived; if so
+-        // store the results for a frame
+-        long duration = getNextGlDuration();
+-        if (duration > 0) {
+-            mCollectedGpuDurations.add(duration);
+-            mCollectedTimestamps.add(mTimestampQueue.isEmpty() ?
+-                    NO_DURATION_YET : mTimestampQueue.poll());
+-            mCollectedCpuDurations.add(mCpuDurationsQueue.isEmpty() ?
+-                    NO_DURATION_YET : mCpuDurationsQueue.poll());
+-        }
+-        if (duration == FAILED_TIMING) {
+-            // Discard timestamp and CPU measurement since GPU measurement failed
+-            if (!mTimestampQueue.isEmpty()) {
+-                mTimestampQueue.poll();
+-            }
+-            if (!mCpuDurationsQueue.isEmpty()) {
+-                mCpuDurationsQueue.poll();
+-            }
+-        }
+-    }
+-
+-    /**
+-     * Add a timestamp to a timing measurement. These are queued up and matched to completed
+-     * workload measurements as they become available.
+-     */
+-    public void addTimestamp(long timestamp) {
+-        mTimestampQueue.add(timestamp);
+-    }
+-
+-    /**
+-     * Get the next available GPU timing measurement.
+-     *
+-     * <p>Since the GPU works asynchronously, the results of a single start/stopGlTimer measurement
+-     * will only be available some time after the {@link #stopTimer} call is made. Poll this method
+-     * until the result becomes available. If multiple start/endTimer measurements are made in a
+-     * row, the results will be available in FIFO order.</p>
+-     *
+-     * @return The measured duration of the GPU workload for the next pending query, or
+-     *         {@link #NO_DURATION_YET} if no queries are pending or the next pending query has not
+-     *         yet finished, or {@link #FAILED_TIMING} if the GPU was unable to complete the
+-     *         measurement.
+-     *
+-     * @throws IllegalStateException If there is a GPU error.
+-     *
+-     */
+-    private long getNextGlDuration() {
+-        long duration = nativeGetNextGlDuration(mNativeContext);
+-        if (duration > 0) {
+-            mCompletedQueryCount++;
+-        }
+-        return duration;
+-    }
+-
+-    /**
+-     * Returns the number of measurements so far that returned a valid duration
+-     * measurement.
+-     */
+-    public int getCompletedQueryCount() {
+-        return mCompletedQueryCount;
+-    }
+-
+-    @Override
+-    protected void finalize() {
+-        nativeDeleteContext(mNativeContext);
+-    }
+-
+-    /**
+-     * Create a native performance measurement context.
+-     *
+-     * @param maxQueryCount maximum in-progress queries; must be >= 1.
+-     */
+-    private static native long nativeCreateContext(int maxQueryCount);
+-
+-    /**
+-     * Delete the native context.
+-     *
+-     * <p>Not safe to call more than once.</p>
+-     */
+-    private static native void nativeDeleteContext(long contextHandle);
+-
+-    /**
+-     * Query whether the relevant Gl extensions are available for Gl timing
+-     */
+-    private static native boolean nativeQuerySupport();
+-
+-    /**
+-     * Start a GL timing section.
+-     *
+-     * <p>All GL commands between this method and the next {@link #nativeEndGlTimer} will be
+-     * included in the timing.</p>
+-     *
+-     * <p>Must be called from the same thread as calls to {@link #nativeEndGlTimer} and
+-     * {@link #nativeGetNextGlDuration}.</p>
+-     *
+-     * @throws IllegalStateException if a GL error occurs or start is called repeatedly.
+-     */
+-    protected static native void nativeStartGlTimer(long contextHandle);
+-
+-    /**
+-     * Finish a GL timing section.
+-     *
+-     * <p>Some time after this call returns, the time the GPU took to
+-     * execute all work submitted between the latest {@link #nativeStartGlTimer} and
+-     * this call, will become available from calling {@link #nativeGetNextGlDuration}.</p>
+-     *
+-     * <p>Must be called from the same thread as calls to {@link #nativeStartGlTimer} and
+-     * {@link #nativeGetNextGlDuration}.</p>
+-     *
+-     * @throws IllegalStateException if a GL error occurs or stop is called before start
+-     */
+-    protected static native void nativeStopGlTimer(long contextHandle);
+-
+-    /**
+-     * Get the next available GL duration measurement, in nanoseconds.
+-     *
+-     * <p>Must be called from the same thread as calls to {@link #nativeStartGlTimer} and
+-     * {@link #nativeEndGlTimer}.</p>
+-     *
+-     * @return the next GL duration measurement, or {@link #NO_DURATION_YET} if
+-     *         no new measurement is available, or {@link #FAILED_TIMING} if timing
+-     *         failed for the next duration measurement.
+-     * @throws IllegalStateException if a GL error occurs
+-     */
+-    protected static native long nativeGetNextGlDuration(long contextHandle);
+-
+-
+-}
+diff --git a/core/java/android/hardware/camera2/legacy/SurfaceTextureRenderer.java b/core/java/android/hardware/camera2/legacy/SurfaceTextureRenderer.java
+index 12d46936c31..c6f4f4d2b0b 100644
+--- a/core/java/android/hardware/camera2/legacy/SurfaceTextureRenderer.java
++++ b/core/java/android/hardware/camera2/legacy/SurfaceTextureRenderer.java
+@@ -171,9 +171,6 @@ public class SurfaceTextureRenderer {
+     private int maPositionHandle;
+     private int maTextureHandle;
+ 
+-    private PerfMeasurement mPerfMeasurer = null;
+-    private static final String LEGACY_PERF_PROPERTY = "persist.camera.legacy_perf";
+-
+     public SurfaceTextureRenderer(int facing) {
+         mFacing = facing;
+ 
+@@ -501,7 +498,6 @@ public class SurfaceTextureRenderer {
+         if (mEGLDisplay != EGL14.EGL_NO_DISPLAY) {
+             EGL14.eglMakeCurrent(mEGLDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE,
+                     EGL14.EGL_NO_CONTEXT);
+-            dumpGlTiming();
+             if (mSurfaces != null) {
+                 for (EGLSurfaceHolder holder : mSurfaces) {
+                     if (holder.eglSurface != null) {
+@@ -552,65 +548,6 @@ public class SurfaceTextureRenderer {
+         }
+     }
+ 
+-    /**
+-     * Save a measurement dump to disk, in
+-     * {@code /sdcard/CameraLegacy/durations_<time>_<width1>x<height1>_...txt}
+-     */
+-    private void dumpGlTiming() {
+-        if (mPerfMeasurer == null) return;
+-
+-        File legacyStorageDir = new File(Environment.getExternalStorageDirectory(), "CameraLegacy");
+-        if (!legacyStorageDir.exists()){
+-            if (!legacyStorageDir.mkdirs()){
+-                Log.e(TAG, "Failed to create directory for data dump");
+-                return;
+-            }
+-        }
+-
+-        StringBuilder path = new StringBuilder(legacyStorageDir.getPath());
+-        path.append(File.separator);
+-        path.append("durations_");
+-
+-        Time now = new Time();
+-        now.setToNow();
+-        path.append(now.format2445());
+-        path.append("_S");
+-        for (EGLSurfaceHolder surface : mSurfaces) {
+-            path.append(String.format("_%d_%d", surface.width, surface.height));
+-        }
+-        path.append("_C");
+-        for (EGLSurfaceHolder surface : mConversionSurfaces) {
+-            path.append(String.format("_%d_%d", surface.width, surface.height));
+-        }
+-        path.append(".txt");
+-        mPerfMeasurer.dumpPerformanceData(path.toString());
+-    }
+-
+-    private void setupGlTiming() {
+-        if (PerfMeasurement.isGlTimingSupported()) {
+-            Log.d(TAG, "Enabling GL performance measurement");
+-            mPerfMeasurer = new PerfMeasurement();
+-        } else {
+-            Log.d(TAG, "GL performance measurement not supported on this device");
+-            mPerfMeasurer = null;
+-        }
+-    }
+-
+-    private void beginGlTiming() {
+-        if (mPerfMeasurer == null) return;
+-        mPerfMeasurer.startTimer();
+-    }
+-
+-    private void addGlTimestamp(long timestamp) {
+-        if (mPerfMeasurer == null) return;
+-        mPerfMeasurer.addTimestamp(timestamp);
+-    }
+-
+-    private void endGlTiming() {
+-        if (mPerfMeasurer == null) return;
+-        mPerfMeasurer.stopTimer();
+-    }
+-
+     /**
+      * Return the surface texture to draw to - this is the texture use to when producing output
+      * surface buffers.
+@@ -671,11 +608,6 @@ public class SurfaceTextureRenderer {
+                 mConversionSurfaces.get(0).eglSurface);
+         initializeGLState();
+         mSurfaceTexture = new SurfaceTexture(getTextureId());
+-
+-        // Set up performance tracking if enabled
+-        if (SystemProperties.getBoolean(LEGACY_PERF_PROPERTY, false)) {
+-            setupGlTiming();
+-        }
+     }
+ 
+     /**
+@@ -700,10 +632,6 @@ public class SurfaceTextureRenderer {
+         boolean doTiming = targetCollector.hasPendingPreviewCaptures();
+         checkGlError("before updateTexImage");
+ 
+-        if (doTiming) {
+-            beginGlTiming();
+-        }
+-
+         mSurfaceTexture.updateTexImage();
+ 
+         long timestamp = mSurfaceTexture.getTimestamp();
+@@ -715,18 +643,12 @@ public class SurfaceTextureRenderer {
+             if (DEBUG) {
+                 Log.d(TAG, "Dropping preview frame.");
+             }
+-            if (doTiming) {
+-                endGlTiming();
+-            }
+             return;
+         }
+ 
+         RequestHolder request = captureHolder.first;
+ 
+         Collection<Surface> targetSurfaces = request.getHolderTargets();
+-        if (doTiming) {
+-            addGlTimestamp(timestamp);
+-        }
+ 
+         List<Long> targetSurfaceIds = LegacyCameraDevice.getSurfaceIds(targetSurfaces);
+         for (EGLSurfaceHolder holder : mSurfaces) {
+@@ -771,10 +693,6 @@ public class SurfaceTextureRenderer {
+             }
+         }
+         targetCollector.previewProduced();
+-
+-        if (doTiming) {
+-            endGlTiming();
+-        }
+     }
+ 
+     /**
+diff --git a/core/jni/Android.mk b/core/jni/Android.mk
+index b5747614929..addd5f16001 100644
+--- a/core/jni/Android.mk
++++ b/core/jni/Android.mk
+@@ -139,7 +139,6 @@ LOCAL_SRC_FILES:= \
+ 	android_hardware_Camera.cpp \
+ 	android_hardware_camera2_CameraMetadata.cpp \
+ 	android_hardware_camera2_legacy_LegacyCameraDevice.cpp \
+-	android_hardware_camera2_legacy_PerfMeasurement.cpp \
+ 	android_hardware_camera2_DngCreator.cpp \
+ 	android_hardware_SensorManager.cpp \
+ 	android_hardware_SerialPort.cpp \
+diff --git a/core/jni/AndroidRuntime.cpp b/core/jni/AndroidRuntime.cpp
+index 208171138ee..d93a012234a 100644
+--- a/core/jni/AndroidRuntime.cpp
++++ b/core/jni/AndroidRuntime.cpp
+@@ -79,7 +79,6 @@ extern int register_android_opengl_jni_GLES31Ext(JNIEnv* env);
+ extern int register_android_hardware_Camera(JNIEnv *env);
+ extern int register_android_hardware_camera2_CameraMetadata(JNIEnv *env);
+ extern int register_android_hardware_camera2_legacy_LegacyCameraDevice(JNIEnv *env);
+-extern int register_android_hardware_camera2_legacy_PerfMeasurement(JNIEnv *env);
+ extern int register_android_hardware_camera2_DngCreator(JNIEnv *env);
+ extern int register_android_hardware_SensorManager(JNIEnv *env);
+ extern int register_android_hardware_SerialPort(JNIEnv *env);
+@@ -1344,7 +1343,6 @@ static const RegJNIRec gRegJNI[] = {
+     REG_JNI(register_android_hardware_Camera),
+     REG_JNI(register_android_hardware_camera2_CameraMetadata),
+     REG_JNI(register_android_hardware_camera2_legacy_LegacyCameraDevice),
+-    REG_JNI(register_android_hardware_camera2_legacy_PerfMeasurement),
+     REG_JNI(register_android_hardware_camera2_DngCreator),
+     REG_JNI(register_android_hardware_SensorManager),
+     REG_JNI(register_android_hardware_SerialPort),
+diff --git a/core/jni/android_hardware_camera2_legacy_PerfMeasurement.cpp b/core/jni/android_hardware_camera2_legacy_PerfMeasurement.cpp
+deleted file mode 100644
+index 93473a55ac2..00000000000
+--- a/core/jni/android_hardware_camera2_legacy_PerfMeasurement.cpp
++++ /dev/null
+@@ -1,335 +0,0 @@
+-/*
+- * Copyright (C) 2014 The Android Open Source Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-#define LOG_TAG "Camera2-Legacy-PerfMeasurement-JNI"
+-#include <utils/Log.h>
+-#include <utils/Errors.h>
+-#include <utils/Trace.h>
+-#include <utils/Vector.h>
+-
+-#include "jni.h"
+-#include "JNIHelp.h"
+-#include "android_runtime/AndroidRuntime.h"
+-
+-#include <ui/GraphicBuffer.h>
+-#include <system/window.h>
+-#include <GLES2/gl2.h>
+-#include <GLES2/gl2ext.h>
+-
+-using namespace android;
+-
+-// fully-qualified class name
+-#define PERF_MEASUREMENT_CLASS_NAME "android/hardware/camera2/legacy/PerfMeasurement"
+-
+-/** GL utility methods copied from com_google_android_gles_jni_GLImpl.cpp */
+-
+-// Check if the extension at the head of pExtensions is pExtension. Note that pExtensions is
+-// terminated by either 0 or space, while pExtension is terminated by 0.
+-
+-static bool
+-extensionEqual(const GLubyte* pExtensions, const GLubyte* pExtension) {
+-    while (true) {
+-        char a = *pExtensions++;
+-        char b = *pExtension++;
+-        bool aEnd = a == '\0' || a == ' ';
+-        bool bEnd = b == '\0';
+-        if (aEnd || bEnd) {
+-            return aEnd == bEnd;
+-        }
+-        if (a != b) {
+-            return false;
+-        }
+-    }
+-}
+-
+-static const GLubyte*
+-nextExtension(const GLubyte* pExtensions) {
+-    while (true) {
+-        char a = *pExtensions++;
+-        if (a == '\0') {
+-            return pExtensions-1;
+-        } else if ( a == ' ') {
+-            return pExtensions;
+-        }
+-    }
+-}
+-
+-static bool
+-checkForExtension(const GLubyte* pExtensions, const GLubyte* pExtension) {
+-    for (; *pExtensions != '\0'; pExtensions = nextExtension(pExtensions)) {
+-        if (extensionEqual(pExtensions, pExtension)) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-/** End copied GL utility methods */
+-
+-bool checkGlError(JNIEnv* env) {
+-    int error;
+-    if ((error = glGetError()) != GL_NO_ERROR) {
+-        jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                "GLES20 error: 0x%d", error);
+-        return true;
+-    }
+-    return false;
+-}
+-
+-/**
+- * Asynchronous low-overhead GL performance measurement using
+- * http://www.khronos.org/registry/gles/extensions/EXT/EXT_disjoint_timer_query.txt
+- *
+- * Measures the duration of GPU processing for a set of GL commands, delivering
+- * the measurement asynchronously once processing completes.
+- *
+- * All calls must come from a single thread with a valid GL context active.
+- **/
+-class PerfMeasurementContext {
+-  private:
+-    Vector<GLuint> mTimingQueries;
+-    size_t mTimingStartIndex;
+-    size_t mTimingEndIndex;
+-    size_t mTimingQueryIndex;
+-    size_t mFreeQueries;
+-
+-    bool mInitDone;
+-  public:
+-
+-    /**
+-     * maxQueryCount should be a conservative estimate of how many query objects
+-     * will be active at once, which is a function of the GPU's level of
+-     * pipelining and the frequency of queries.
+-     */
+-    PerfMeasurementContext(size_t maxQueryCount):
+-            mTimingStartIndex(0),
+-            mTimingEndIndex(0),
+-            mTimingQueryIndex(0) {
+-        mTimingQueries.resize(maxQueryCount);
+-        mFreeQueries = maxQueryCount;
+-        mInitDone = false;
+-    }
+-
+-    int getMaxQueryCount() {
+-        return mTimingQueries.size();
+-    }
+-
+-    /**
+-     * Start a measurement period using the next available query object.
+-     * Returns INVALID_OPERATION if called multiple times in a row,
+-     * and BAD_VALUE if no more query objects are available.
+-     */
+-    int startGlTimer() {
+-        // Lazy init of queries to avoid needing GL context during construction
+-        if (!mInitDone) {
+-            glGenQueriesEXT(mTimingQueries.size(), mTimingQueries.editArray());
+-            mInitDone = true;
+-        }
+-
+-        if (mTimingEndIndex != mTimingStartIndex) {
+-            return INVALID_OPERATION;
+-        }
+-
+-        if (mFreeQueries == 0) {
+-            return BAD_VALUE;
+-        }
+-
+-        glBeginQueryEXT(GL_TIME_ELAPSED_EXT, mTimingQueries[mTimingStartIndex]);
+-
+-        mTimingStartIndex = (mTimingStartIndex + 1) % mTimingQueries.size();
+-        mFreeQueries--;
+-
+-        return OK;
+-    }
+-
+-    /**
+-     * Finish the current measurement period
+-     * Returns INVALID_OPERATION if called before any startGLTimer calls
+-     * or if called multiple times in a row.
+-     */
+-    int stopGlTimer() {
+-        size_t nextEndIndex = (mTimingEndIndex + 1) % mTimingQueries.size();
+-        if (nextEndIndex != mTimingStartIndex) {
+-            return INVALID_OPERATION;
+-        }
+-        glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+-
+-        mTimingEndIndex = nextEndIndex;
+-
+-        return OK;
+-    }
+-
+-    static const nsecs_t NO_DURATION_YET = -1L;
+-    static const nsecs_t FAILED_MEASUREMENT = -2L;
+-
+-    /**
+-     * Get the next available duration measurement.
+-     *
+-     * Returns NO_DURATION_YET if no new measurement is available,
+-     * and FAILED_MEASUREMENT if an error occurred during the next
+-     * measurement period.
+-     *
+-     * Otherwise returns a positive number of nanoseconds measuring the
+-     * duration of the oldest completed query.
+-     */
+-    nsecs_t getNextGlDuration() {
+-        if (!mInitDone) {
+-            // No start/stop called yet
+-            return NO_DURATION_YET;
+-        }
+-
+-        GLint available;
+-        glGetQueryObjectivEXT(mTimingQueries[mTimingQueryIndex],
+-                GL_QUERY_RESULT_AVAILABLE_EXT, &available);
+-        if (!available) {
+-            return NO_DURATION_YET;
+-        }
+-
+-        GLint64 duration = FAILED_MEASUREMENT;
+-        GLint disjointOccurred;
+-        glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjointOccurred);
+-
+-        if (!disjointOccurred) {
+-            glGetQueryObjecti64vEXT(mTimingQueries[mTimingQueryIndex],
+-                    GL_QUERY_RESULT_EXT,
+-                    &duration);
+-        }
+-
+-        mTimingQueryIndex = (mTimingQueryIndex + 1) % mTimingQueries.size();
+-        mFreeQueries++;
+-
+-        return static_cast<nsecs_t>(duration);
+-    }
+-
+-    static bool isMeasurementSupported() {
+-        const GLubyte* extensions = glGetString(GL_EXTENSIONS);
+-        return checkForExtension(extensions,
+-                reinterpret_cast<const GLubyte*>("GL_EXT_disjoint_timer_query"));
+-    }
+-
+-};
+-
+-PerfMeasurementContext* getContext(jlong context) {
+-    return reinterpret_cast<PerfMeasurementContext*>(context);
+-}
+-
+-extern "C" {
+-
+-static jlong PerfMeasurement_nativeCreateContext(JNIEnv* env, jobject thiz,
+-        jint maxQueryCount) {
+-    PerfMeasurementContext *context = new PerfMeasurementContext(maxQueryCount);
+-    return reinterpret_cast<jlong>(context);
+-}
+-
+-static void PerfMeasurement_nativeDeleteContext(JNIEnv* env, jobject thiz,
+-        jlong contextHandle) {
+-    PerfMeasurementContext *context = getContext(contextHandle);
+-    delete(context);
+-}
+-
+-static jboolean PerfMeasurement_nativeQuerySupport(JNIEnv* env, jobject thiz) {
+-    bool supported = PerfMeasurementContext::isMeasurementSupported();
+-    checkGlError(env);
+-    return static_cast<jboolean>(supported);
+-}
+-
+-static void PerfMeasurement_nativeStartGlTimer(JNIEnv* env, jobject thiz,
+-        jlong contextHandle) {
+-
+-    PerfMeasurementContext *context = getContext(contextHandle);
+-    status_t err = context->startGlTimer();
+-    if (err != OK) {
+-        switch (err) {
+-            case INVALID_OPERATION:
+-                jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                        "Mismatched start/end GL timing calls");
+-                return;
+-            case BAD_VALUE:
+-                jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                        "Too many timing queries in progress, max %d",
+-                        context->getMaxQueryCount());
+-                return;
+-            default:
+-                jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                        "Unknown error starting GL timing");
+-                return;
+-        }
+-    }
+-    checkGlError(env);
+-}
+-
+-static void PerfMeasurement_nativeStopGlTimer(JNIEnv* env, jobject thiz,
+-            jlong contextHandle) {
+-
+-    PerfMeasurementContext *context = getContext(contextHandle);
+-    status_t err = context->stopGlTimer();
+-    if (err != OK) {
+-        switch (err) {
+-            case INVALID_OPERATION:
+-                jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                        "Mismatched start/end GL timing calls");
+-                return;
+-            default:
+-                jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+-                        "Unknown error ending GL timing");
+-                return;
+-        }
+-    }
+-    checkGlError(env);
+-}
+-
+-static jlong PerfMeasurement_nativeGetNextGlDuration(JNIEnv* env,
+-        jobject thiz, jlong contextHandle) {
+-    PerfMeasurementContext *context = getContext(contextHandle);
+-    nsecs_t duration = context->getNextGlDuration();
+-
+-    checkGlError(env);
+-    return static_cast<jlong>(duration);
+-}
+-
+-} // extern "C"
+-
+-static JNINativeMethod gPerfMeasurementMethods[] = {
+-    { "nativeCreateContext",
+-      "(I)J",
+-      (jlong *)PerfMeasurement_nativeCreateContext },
+-    { "nativeDeleteContext",
+-      "(J)V",
+-      (void *)PerfMeasurement_nativeDeleteContext },
+-    { "nativeQuerySupport",
+-      "()Z",
+-      (jboolean *)PerfMeasurement_nativeQuerySupport },
+-    { "nativeStartGlTimer",
+-      "(J)V",
+-      (void *)PerfMeasurement_nativeStartGlTimer },
+-    { "nativeStopGlTimer",
+-      "(J)V",
+-      (void *)PerfMeasurement_nativeStopGlTimer },
+-    { "nativeGetNextGlDuration",
+-      "(J)J",
+-      (jlong *)PerfMeasurement_nativeGetNextGlDuration }
+-};
+-
+-
+-// Get all the required offsets in java class and register native functions
+-int register_android_hardware_camera2_legacy_PerfMeasurement(JNIEnv* env)
+-{
+-    // Register native functions
+-    return AndroidRuntime::registerNativeMethods(env,
+-            PERF_MEASUREMENT_CLASS_NAME,
+-            gPerfMeasurementMethods,
+-            NELEM(gPerfMeasurementMethods));
+-}
+-- 
+2.15.1
+

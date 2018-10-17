@@ -1,0 +1,87 @@
+From d6f040c6589bf81192522e8a6e451b79125d4c9b Mon Sep 17 00:00:00 2001
+From: blackrebel75 <72fabio1@virgilio.it>
+Date: Sun, 24 Jun 2018 18:46:31 +0200
+Subject: [PATCH 27/27] [MTK] Add more audio enum
+
+---
+ include/system/audio.h        | 11 +++++++++++
+ include/system/audio_policy.h |  6 ++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/include/system/audio.h b/include/system/audio.h
+index e99a813c..ca9ac118 100644
+--- a/include/system/audio.h
++++ b/include/system/audio.h
+@@ -357,6 +357,7 @@ typedef enum {
+                                         AUDIO_FORMAT_PCM_SUB_16_BIT),
+     AUDIO_FORMAT_PCM_24_BIT_OFFLOAD  = (AUDIO_FORMAT_PCM_OFFLOAD |
+                                         AUDIO_FORMAT_PCM_SUB_8_24_BIT),
++    AUDIO_FORMAT_VM_FMT
+ } audio_format_t;
+ 
+ /* For the channel mask for position assignment representation */
+@@ -633,6 +634,10 @@ typedef enum {
+     AUDIO_MODE_RINGTONE         = 1,
+     AUDIO_MODE_IN_CALL          = 2,
+     AUDIO_MODE_IN_COMMUNICATION = 3,
++//#ifdef MTK_AUDIO
++    AUDIO_MODE_IN_CALL_2        = 4,
++    AUDIO_MODE_IN_CALL_EXTERNAL = 5,
++//#endif
+ 
+     AUDIO_MODE_CNT,
+     AUDIO_MODE_MAX              = AUDIO_MODE_CNT - 1,
+@@ -689,6 +694,7 @@ enum {
+     AUDIO_DEVICE_OUT_AUX_LINE                  = 0x200000,
+     /* limited-output speaker device for acoustic safety */
+     AUDIO_DEVICE_OUT_SPEAKER_SAFE              = 0x400000,
++    AUDIO_DEVICE_OUT_FM_TX = AUDIO_DEVICE_OUT_FM, // MTK
+ #ifdef QCOM_HARDWARE
+     AUDIO_DEVICE_OUT_FM_TX                     = 0x1000000,
+     AUDIO_DEVICE_OUT_PROXY                     = 0x2000000,
+@@ -763,6 +769,9 @@ enum {
+     AUDIO_DEVICE_IN_FM_RX                 = AUDIO_DEVICE_BIT_IN | 0x200000,
+     AUDIO_DEVICE_IN_FM_RX_A2DP            = AUDIO_DEVICE_BIT_IN | 0x400000,
+ #endif
++    AUDIO_DEVICE_IN_FM                    = AUDIO_DEVICE_BIT_IN | 0x81000000, // FM   (analog or digital)
++    AUDIO_DEVICE_IN_SPK_FEED 		  = AUDIO_DEVICE_BIT_IN | 0x82000000,
++    AUDIO_DEVICE_IN_MATV                  = AUDIO_DEVICE_BIT_IN | 0x88000000, // mATV (analog or digital)
+     AUDIO_DEVICE_IN_DEFAULT               = AUDIO_DEVICE_BIT_IN | AUDIO_DEVICE_BIT_DEFAULT,
+ 
+     AUDIO_DEVICE_IN_ALL     = (AUDIO_DEVICE_IN_COMMUNICATION |
+@@ -789,6 +798,8 @@ enum {
+                                AUDIO_DEVICE_IN_FM_RX_A2DP |
+                                AUDIO_DEVICE_IN_PROXY |
+ #endif
++                               AUDIO_DEVICE_IN_FM |
++                               AUDIO_DEVICE_IN_MATV |
+                                AUDIO_DEVICE_IN_DEFAULT),
+     AUDIO_DEVICE_IN_ALL_SCO = AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,
+     AUDIO_DEVICE_IN_ALL_USB  = (AUDIO_DEVICE_IN_USB_ACCESSORY |
+diff --git a/include/system/audio_policy.h b/include/system/audio_policy.h
+index 28811049..a7ea1988 100644
+--- a/include/system/audio_policy.h
++++ b/include/system/audio_policy.h
+@@ -44,6 +44,9 @@ typedef enum {
+     AUDIO_POLICY_FORCE_DIGITAL_DOCK,
+     AUDIO_POLICY_FORCE_NO_BT_A2DP, /* A2DP sink is not preferred to speaker or wired HS */
+     AUDIO_POLICY_FORCE_SYSTEM_ENFORCED,
++#ifdef MTK_HARDWARE
++		AUDIO_POLICY_FORCE_NO_SYSTEM_ENFORCED,
++#endif
+     AUDIO_POLICY_FORCE_HDMI_SYSTEM_AUDIO_ENFORCED,
+ 
+     AUDIO_POLICY_FORCE_CFG_CNT,
+@@ -59,6 +62,9 @@ typedef enum {
+     AUDIO_POLICY_FORCE_FOR_RECORD,
+     AUDIO_POLICY_FORCE_FOR_DOCK,
+     AUDIO_POLICY_FORCE_FOR_SYSTEM,
++#ifdef MTK_HARDWARE
++    AUDIO_POLICY_FORCE_FOR_PROPRIETARY,
++#endif
+     AUDIO_POLICY_FORCE_FOR_HDMI_SYSTEM_AUDIO,
+ 
+     AUDIO_POLICY_FORCE_USE_CNT,
+-- 
+2.15.1
+

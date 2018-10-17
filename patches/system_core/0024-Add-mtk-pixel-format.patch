@@ -1,0 +1,33 @@
+From b4ae956194705b16d46929b4bf5d12cea6c45604 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 7 Feb 2018 17:13:19 +0100
+Subject: [PATCH 24/27] Add mtk pixel format
+
+---
+ include/system/graphics.h | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/include/system/graphics.h b/include/system/graphics.h
+index b207ee82..badaced2 100644
+--- a/include/system/graphics.h
++++ b/include/system/graphics.h
+@@ -89,6 +89,16 @@ enum {
+      * GL_OES_EGL_image_external OpenGL ES extension.
+      */
+ 
++#ifdef MTK_HARDWARE
++    HAL_PIXEL_FORMAT_I420           = 0x00000100,     // MTK I420
++    HAL_PIXEL_FORMAT_NV12_BLK       = 0x00000101,     // MTK NV12 block progres
++    HAL_PIXEL_FORMAT_NV12_BLK_FCM   = 0x00000102,     // MTK NV12 block field m
++
++    HAL_PIXEL_FORMAT_YUV_PRIVATE    = 0x00000103,     // I420 or NV12_BLK or NV
++
++    HAL_PIXEL_FORMAT_I420_DI        = 0x00000106,     // MTK I420 for deinterla
++    HAL_PIXEL_FORMAT_YV12_DI        = 0x00000107,     // MTK YV12 for deinterla
++#endif
+     /*
+      * Android YUV format:
+      *
+-- 
+2.15.1
+

@@ -1,0 +1,36 @@
+From 0cb907b9cc22a84e9276228073b15406fd807788 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Fri, 22 Apr 2016 22:52:01 +0200
+Subject: [PATCH 02/18] Fix FM volume control
+
+Change-Id: Ie56820e540e738f0fcd14276dcda89f199166d65
+---
+ services/audioflinger/AudioFlinger.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/services/audioflinger/AudioFlinger.cpp b/services/audioflinger/AudioFlinger.cpp
+index 321f45e2a..ad7c301c7 100644
+--- a/services/audioflinger/AudioFlinger.cpp
++++ b/services/audioflinger/AudioFlinger.cpp
+@@ -1151,6 +1151,18 @@ status_t AudioFlinger::setStreamVolume(audio_stream_type_t stream, float value,
+         thread->setStreamVolume(stream, value);
+     }
+ 
++#ifdef MTK_HARDWARE
++    // MTK FM Volume
++    if(stream == AUDIO_STREAM_MUSIC) {
++        sp<ThreadBase> thread;
++        thread = checkPlaybackThread_l(output);
++        if (thread == primaryPlaybackThread_l()) {
++            audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
++            dev->set_parameters (dev, String8::format("SetFmVolume=%f", value));
++        }
++    }
++#endif
++
+     return NO_ERROR;
+ }
+ 
+-- 
+2.15.1
+

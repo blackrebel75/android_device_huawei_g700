@@ -1,0 +1,37 @@
+From e8faf36b6f3c785b5685598f6bb659ef1160519f Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 23:27:36 +0200
+Subject: [PATCH 3/8] hotfix for hwui crashing
+
+Former-commit-id: 42f3efb1775a60f4ce4200ae0e3ee0db2e5fd384
+---
+ libs/hwui/Caches.cpp | 13 +++----------
+ 1 file changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/libs/hwui/Caches.cpp b/libs/hwui/Caches.cpp
+index 77b66f21371..76abcd12b62 100644
+--- a/libs/hwui/Caches.cpp
++++ b/libs/hwui/Caches.cpp
+@@ -117,16 +117,9 @@ void Caches::initFont() {
+ }
+ 
+ void Caches::initExtensions() {
+-    if (mExtensions.hasDebugMarker()) {
+-        eventMark = glInsertEventMarkerEXT;
+-
+-        startMark = glPushGroupMarkerEXT;
+-        endMark = glPopGroupMarkerEXT;
+-    } else {
+-        eventMark = eventMarkNull;
+-        startMark = startMarkNull;
+-        endMark = endMarkNull;
+-    }
++    eventMark = eventMarkNull;
++    startMark = startMarkNull;
++    endMark = endMarkNull;
+ 
+     if (mExtensions.hasDebugLabel() && (drawDeferDisabled || drawReorderDisabled)) {
+         setLabel = glLabelObjectEXT;
+-- 
+2.15.1
+

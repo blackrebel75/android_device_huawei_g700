@@ -1,0 +1,847 @@
+From 8482c41418f41e5f38a09b9018f8971a207dba5d Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 21 Jun 2018 18:28:40 +0200
+Subject: [PATCH 18/18] [MTK] Clean patch for video recorder. Remove uneeded
+ stuff.
+
+---
+ media/libstagefright/ACodec.cpp   | 304 ++++----------------------------------
+ media/libstagefright/OMXCodec.cpp | 225 +---------------------------
+ 2 files changed, 34 insertions(+), 495 deletions(-)
+
+diff --git a/media/libstagefright/ACodec.cpp b/media/libstagefright/ACodec.cpp
+index 6ff702fec..e021ad32e 100644
+--- a/media/libstagefright/ACodec.cpp
++++ b/media/libstagefright/ACodec.cpp
+@@ -112,10 +112,6 @@
+ #endif
+ 
+ #ifdef MTK_HARDWARE
+-#include <cutils/properties.h>
+-#include <utils/CallStack.h> //Callstack
+-#include "DpBlitStream.h"
+-
+ #define ENABLE_MTK_BUF_ADDR_ALIGNMENT
+ #define MTK_BUF_ADDR_ALIGNMENT_VALUE 512
+ 
+@@ -480,14 +476,9 @@ ACodec::ACodec()
+       mSupportsPartialFrames(false),
+       mLeftOverBuffer(NULL),
+       mMaxQueueBufferNum(-1),
+-      mDumpFile(NULL),
+-      mIsDumpFile(false),
+-      mIsVideoDecoder(false),
+-      mIsVideoEncoder(false),
+       mIsVideoEncoderInputSurface(0),
+       mVideoAspectRatioWidth(1),
+       mVideoAspectRatioHeight(1),
+-      mIsDemandNormalYUV(false),
+ #endif
+       mSentFormat(false),
+       mIsEncoder(false),
+@@ -665,7 +656,13 @@ status_t ACodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+                     def.nBufferCountActual, def.nBufferSize,
+                     portIndex == kPortIndexInput ? "input" : "output");
+ 
++#ifdef MTK_HARDWARE
++            OMX_U32 memoryAlign = 32;
++            size_t totalSize = def.nBufferCountActual *
++                ((def.nBufferSize + (memoryAlign - 1))&(~(memoryAlign - 1)));
++#else
+             size_t totalSize = def.nBufferCountActual * def.nBufferSize;
++#endif
+             mDealer[portIndex] = new MemoryDealer(totalSize, "ACodec");
+ 
+             for (OMX_U32 i = 0; i < def.nBufferCountActual; ++i) {
+@@ -748,32 +745,34 @@ status_t ACodec::configureOutputBuffersFromNativeWindow(
+         return err;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-// mtk color/pixel formats for JB blob
+-        uint32_t eHalColorFormat;
+-       switch (def.format.video.eColorFormat) {
+-        case OMX_COLOR_FormatVendorMTKYUV:
+-            eHalColorFormat = HAL_PIXEL_FORMAT_NV12_BLK;
+-            break;
+-        default:
+-            eHalColorFormat = HAL_PIXEL_FORMAT_I420;
+-            break;           
++#ifdef USE_SAMSUNG_COLORFORMAT
++    OMX_COLOR_FORMATTYPE eNativeColorFormat = def.format.video.eColorFormat;
++    setNativeWindowColorFormat(eNativeColorFormat);
++
++    err = native_window_set_buffers_geometry(
++    mNativeWindow.get(),
++    def.format.video.nFrameWidth,
++    def.format.video.nFrameHeight,
++    eNativeColorFormat);
++#elif defined(MTK_HARDWARE)
++    OMX_U32 frameWidth = def.format.video.nFrameWidth;
++    OMX_U32 frameHeight = def.format.video.nFrameHeight;
++
++    if (!strncmp("OMX.MTK.", mComponentName.c_str(), 8)) {
++        frameWidth = def.format.video.nStride;
++        frameHeight = def.format.video.nSliceHeight;
+     }
+-        ALOGD ("native_window_set_buffers_geometry err(%x), W(%d), H(%d), Stride(%d), SliceH(%d)", err, def.format.video.nFrameWidth, def.format.video.nFrameHeight, def.format.video.nStride, def.format.video.nSliceHeight);
+-#endif
+ 
+     err = native_window_set_buffers_geometry(
+             mNativeWindow.get(),
+-#ifdef MTK_HARDWARE
+-            def.format.video.nStride,
+-            def.format.video.nSliceHeight,
++            frameWidth,
++            frameHeight,
++            def.format.video.eColorFormat);
+ #else
++    err = native_window_set_buffers_geometry(
++            mNativeWindow.get(),
+             def.format.video.nFrameWidth,
+             def.format.video.nFrameHeight,
+-#endif
+-#ifdef MTK_HARDWARE
+-            eHalColorFormat);
+-#else
+             def.format.video.eColorFormat);
+ #endif
+ 
+@@ -1110,21 +1109,12 @@ status_t ACodec::cancelBufferToNativeWindow(BufferInfo *info) {
+     int err = mNativeWindow->cancelBuffer(
+         mNativeWindow.get(), info->mGraphicBuffer.get(), -1);
+ 
+-#ifdef MTK_HARDWARE
+-    if (err != 0) {
+-        ALOGE("failed to cancel buffer from native window: %p, err = %d", mNativeWindow.get(), err);
+-        info->mStatus = BufferInfo::OWNED_BY_UNEXPECTED;
+-    } else {
+-#endif
+ 
+     ALOGW_IF(err != 0, "[%s] can not return buffer %u to native window",
+             mComponentName.c_str(), info->mBufferID);
+ 
+     info->mStatus = BufferInfo::OWNED_BY_NATIVE_WINDOW;
+ 
+-#ifdef MTK_HARDWARE
+-    }
+-#endif
+     return err;
+ }
+ 
+@@ -2017,73 +2007,6 @@ status_t ACodec::configureCodec(
+     mInputFormat = inputFormat;
+     mOutputFormat = outputFormat;
+ 
+-#ifdef MTK_HARDWARE
+-    if ((!strncmp("OMX.MTK.", mComponentName.c_str(), 8)) && (!mIsEncoder)) {
+-        OMX_BOOL value;
+-        // check if codec supports partial frames input
+-        status_t err = mOMX->getParameter(mNode, 
+-                (OMX_INDEXTYPE)OMX_IndexVendorMtkOmxPartialFrameQuerySupported, 
+-                &value, sizeof(value));
+-        mSupportsPartialFrames = value;
+-        if (err != OK) {
+-            mSupportsPartialFrames = false;
+-        }
+-        ALOGI("mSupportsPartialFrames %d err %d ", mSupportsPartialFrames, err);
+-    }
+-
+-    // mtk80902: porting rtsp settings from OMXCodec
+-    int32_t mode;
+-    if (msg->findInt32("rtsp-seek-mode", &mode) && mode != 0) {
+-        status_t err2 = OK;
+-        OMX_INDEXTYPE index = OMX_IndexMax;
+-        status_t err = mOMX->getExtensionIndex(mNode, "OMX.MTK.index.param.video.StreamingMode", &index);
+-        if (err == OK) {
+-            OMX_BOOL m = OMX_TRUE; 
+-            err2 = mOMX->setParameter(mNode, index, &m, sizeof(m));
+-        }
+-        ALOGI("set StreamingMode, index = %x, err = %x, err2 = %x", index, err, err2);
+-    }
+-    int32_t number = -1;
+-    if (msg->findInt32("max-queue-buffer", &number) && number > 0) {
+-        mMaxQueueBufferNum = number;
+-    }
+-    if (msg->findInt32("input-buffer-number", &number) && number > 0) {
+-        OMX_PARAM_PORTDEFINITIONTYPE def;
+-        InitOMXParams(&def);
+-        def.nPortIndex = kPortIndexInput;
+-
+-        status_t err = mOMX->getParameter(
+-        mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        CHECK_EQ((int)err, (int)OK);
+-
+-        def.nBufferCountActual = number > (int32_t)def.nBufferCountMin 
+-            ? number : def.nBufferCountMin;
+-
+-        err = mOMX->setParameter(
+-        mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        CHECK_EQ((int)err, (int)OK);
+-
+-        err = mOMX->getParameter(
+-        mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        CHECK_EQ((int)err, (int)OK);
+-    }
+-// mtk80902: porting from OMXCodec - is video enc/dec
+-    if (false == mIsEncoder) {
+-        if ((!strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG2, mime)) ||
+-#ifdef MTK_HARDWARE
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP9, mime)) ||            
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP8, mime))
+-#endif
+-        ) { 
+-            mIsVideoDecoder = true;
+-        }
+-
+-
+-    }
+-#endif
+ 
+     return err;
+ }
+@@ -2871,53 +2794,17 @@ status_t ACodec::setupVideoEncoder(const char *mime, const sp<AMessage> &msg) {
+         stride = width;
+     }
+ 
+-/*it can be remove after ap set this parameters
+-    @hide
+-    public static final String KEY_STRIDE = "stride";
+-*/
+-#ifdef MTK_HARDWARE
+-    video_def->nStride = ROUND_16(stride);
+-#else
+     video_def->nStride = stride;
+-#endif
+ 
+     int32_t sliceHeight;
+     if (!msg->findInt32("slice-height", &sliceHeight)) {
+         sliceHeight = height;
+     }
+ 
+-/*it can be remove after ap set this parameters
+-    @hide
+-    public static final String KEY_SLICE_HEIGHT = "slice-height";
+-*/
+-#ifdef MTK_HARDWARE
+-    video_def->nSliceHeight = ROUND_16(sliceHeight);
+-#else
+     video_def->nSliceHeight = sliceHeight;
+-#endif
+ 
+-#ifdef MTK_HARDWARE
+-    if( colorFormat == OMX_COLOR_Format16bitRGB565 )
+-        def.nBufferSize = (video_def->nStride * video_def->nSliceHeight * 2);
+-    else if( colorFormat == OMX_COLOR_Format24bitRGB888 )
+-        def.nBufferSize = (video_def->nStride * video_def->nSliceHeight * 3);
+-    else if( colorFormat == OMX_COLOR_Format32bitARGB8888 )
+-        def.nBufferSize = (video_def->nStride * video_def->nSliceHeight * 4);
+-    else
+-    def.nBufferSize = (video_def->nStride * video_def->nSliceHeight * 3) / 2;
+-#else
+     def.nBufferSize = (video_def->nStride * video_def->nSliceHeight * 3) / 2;
+-#endif
+ 
+-#ifdef MTK_HARDWARE
+-     {
+-         int32_t  inputbufferCnt;
+-         if (msg->findInt32("inputbuffercnt", &inputbufferCnt)) {
+-            def.nBufferCountActual  = inputbufferCnt;
+-            ALOGI("input buffer count is %d", inputbufferCnt);
+-         }
+-     }
+-#endif
+     float frameRate;
+     if (!msg->findFloat("frame-rate", &frameRate)) {
+         int32_t tmp;
+@@ -2993,15 +2880,6 @@ status_t ACodec::setupVideoEncoder(const char *mime, const sp<AMessage> &msg) {
+     video_def->eCompressionFormat = compressionFormat;
+     video_def->eColorFormat = OMX_COLOR_FormatUnused;
+ 
+-#ifdef MTK_HARDWARE
+-     {
+-         int32_t  outputbuffersize;
+-         if (msg->findInt32("outputbuffersize", &outputbuffersize)) {
+-            def.nBufferSize  = outputbuffersize;
+-            ALOGI("output buffer size is %d", outputbuffersize);
+-         }
+-     }
+-#endif
+     err = mOMX->setParameter(
+             mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+ 
+@@ -3421,12 +3299,6 @@ status_t ACodec::setupAVCEncoderParameters(const sp<AMessage> &msg) {
+     if (err != OK) {
+         return err;
+     }
+-#ifdef MTK_HARDWARE
+-    err = setVEncIInterval(iFrameInterval);
+-    if (err != OK) {
+-        return err;
+-    }
+-#endif
+ 
+     return configureBitrate(bitrate, bitrateMode);
+ }
+@@ -3966,12 +3838,6 @@ status_t ACodec::getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify) {
+                     notify->setInt32("stride", videoDef->nStride);
+                     notify->setInt32("slice-height", videoDef->nSliceHeight);
+                     notify->setInt32("color-format", videoDef->eColorFormat);
+-#ifdef MTK_HARDWARE
+-            notify->setInt32("width-ratio", mVideoAspectRatioWidth);
+-            notify->setInt32("height-ratio", mVideoAspectRatioHeight);
+-            ALOGD("OMXCodec:: w %d, h %d, s %d, sh %d, cf %x", videoDef->nFrameWidth, videoDef->nFrameHeight,
+-            videoDef->nStride, videoDef->nSliceHeight, videoDef->eColorFormat);
+-#endif
+                     if (mNativeWindow == NULL) {
+                         DescribeColorFormatParams describeParams;
+                         InitOMXParams(&describeParams);
+@@ -4018,26 +3884,6 @@ status_t ACodec::getPortFormat(OMX_U32 portIndex, sp<AMessage> &notify) {
+                         rect.nWidth = videoDef->nFrameWidth;
+                         rect.nHeight = videoDef->nFrameHeight;
+                     }
+-#ifdef MTK_HARDWARE
+-                if( OMX_COLOR_FormatYUV420Planar != videoDef->eColorFormat )
+-                {
+-                    //adjust stride and sliceheight for color convert output is base on width and height
+-                    if( (OMX_COLOR_FormatVendorMTKYUV == videoDef->eColorFormat) || (OMX_MTK_COLOR_FormatYV12== videoDef->eColorFormat) )
+-                    {
+-                        // In CTS EncodeDecodeTest.java, we may disable this format update
+-                        //private boolean checkFrame(int frameIndex, MediaFormat format, ByteBuffer frameData) {
+-                        // Check for color formats we don't understand.  There is no requirement for video
+-                        // decoders to use a "mundane" format, so we just give a pass on proprietary formats.
+-                        notify->setInt32("stride", videoDef->nFrameWidth);
+-                        notify->setInt32("slice-height", videoDef->nFrameHeight);
+-                        //disable temporary for KK CTS decoderTest EOSBehavior
+-                        notify->setInt32("color-format", OMX_COLOR_FormatYUV420Planar);
+-                        ALOGD("Update output width %d, height %d, stride %d, slice-height %d", videoDef->nFrameWidth, 
+-                            videoDef->nFrameHeight, videoDef->nStride, videoDef->nSliceHeight);
+-                        ALOGD("Update output format from %x to %x", videoDef->eColorFormat, OMX_COLOR_FormatYUV420Planar);
+-                    }
+-                }
+-#endif
+ 
+                     CHECK_GE(rect.nLeft, 0);
+                     CHECK_GE(rect.nTop, 0);
+@@ -4463,35 +4309,10 @@ void ACodec::signalError(OMX_ERRORTYPE error, status_t internalError) {
+     }
+ 
+     mFatalError = true;
+-#ifdef MTK_HARDWARE
+-// mtk80902: ALPS00442417 - porting error handler from OMXCodec
+-    if(error == OMX_ErrorStreamCorrupt)
+-    {                        
+-        ALOGW("OMXCodec::onEvent--OMX Error Stream Corrupt!!");     
+-        if(mIsVideoEncoder) {
+-            ALOGW("OMXCodec::onEvent--Video encoder error");
+-            notify->setInt32("err", ERROR_UNSUPPORTED_VIDEO);
+-            notify->post();
+-        }
+-    } else if (mIsVideoDecoder && error == OMX_ErrorBadParameter) {
+-        ALOGW("OMXCodec::onEvent--OMX Bad Parameter!!");
+-        notify->setInt32("err", ERROR_UNSUPPORTED_VIDEO);
+-        notify->post();
+-    } else if (!mIsEncoder && !mIsVideoDecoder && error == OMX_ErrorBadParameter){
+-        ALOGW("OMXCodec::onEvent--Audio OMX Bad Parameter!!");
+-        notify->setInt32("err", ERROR_UNSUPPORTED_AUDIO);
+-        notify->post();
+-    } else {
+-        ALOGW("OMXCodec::onEvent internalError %d", internalError);
+-        notify->setInt32("err", internalError);
+-        notify->post();
+-    }
+-#else
+ 
+     notify->setInt32("err", internalError);
+     notify->setInt32("actionCode", ACTION_CODE_FATAL); // could translate from OMX error.
+     notify->post();
+-#endif
+ }
+ 
+ status_t ACodec::pushBlankBuffersToNativeWindow() {
+@@ -4648,45 +4469,6 @@ status_t ACodec::requestIDRFrame() {
+         return ERROR_UNSUPPORTED;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-        if (!strncmp(mComponentName.c_str(), "OMX.MTK.", 8)) {
+-	     ALOGI("request I frame");
+-            OMX_INDEXTYPE index;
+-            status_t err =
+-            mOMX->getExtensionIndex(
+-                    mNode,
+-                    "OMX.MTK.index.param.video.EncSetForceIframe",
+-                    &index);
+-
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            OMX_BOOL enable = OMX_TRUE;
+-            err = mOMX->setConfig(mNode, index, &enable, sizeof(enable));
+-
+-            if (err != OK) {
+-                ALOGE("setConfig('OMX.MTK.index.param.video.EncSetForceIframe') returned error 0x%08x", err);
+-                return err;
+-            }
+-
+-	    return OK;
+-	}
+-        else {
+-	     ALOGI("request I frame - non MTK codec index(0x%08X)", OMX_IndexConfigVideoIntraVOPRefresh);
+-    OMX_CONFIG_INTRAREFRESHVOPTYPE params;
+-    InitOMXParams(&params);
+-
+-    params.nPortIndex = kPortIndexOutput;
+-    params.IntraRefreshVOP = OMX_TRUE;
+-
+-    return mOMX->setConfig(
+-            mNode,
+-            OMX_IndexConfigVideoIntraVOPRefresh,
+-            &params,
+-            sizeof(params));
+-}
+-#else
+     OMX_CONFIG_INTRAREFRESHVOPTYPE params;
+     InitOMXParams(&params);
+ 
+@@ -4698,8 +4480,6 @@ status_t ACodec::requestIDRFrame() {
+             OMX_IndexConfigVideoIntraVOPRefresh,
+             &params,
+             sizeof(params));
+-#endif
+-
+ }
+ 
+ #ifdef MTK_HARDWARE
+@@ -5900,13 +5680,6 @@ bool ACodec::LoadedState::onConfigureComponent(
+         CHECK(nativeWindow != NULL);
+         mCodec->mNativeWindow = nativeWindow->getNativeWindow();
+ 
+-#ifdef MTK_HARDWARE
+-        ALOGD("@debug: native windows to set %p", mCodec->mNativeWindow.get());
+-        if (mCodec->mNativeWindow.get() == NULL) {
+-            ALOGD("onConfigureComponent: fail because native window is null");
+-            return false;
+-        }
+-#endif
+         native_window_set_scaling_mode(
+                 mCodec->mNativeWindow.get(),
+                 NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+@@ -6500,40 +6273,17 @@ bool ACodec::ExecutingState::onOMXEvent(
+         {
+             CHECK_EQ(data1, (OMX_U32)kPortIndexOutput);
+ 
+-#ifdef MTK_HARDWARE
+-            if (data2 == 0 || data2 == OMX_IndexParamPortDefinition || data2 == OMX_IndexVendorMtkOmxVdecGetAspectRatio) {
+-#else
+             if (data2 == 0 || data2 == OMX_IndexParamPortDefinition) {
+-#endif
+                 mCodec->mMetaDataBuffersToSubmit = 0;
+                 CHECK_EQ(mCodec->mOMX->sendCommand(
+                             mCodec->mNode,
+                             OMX_CommandPortDisable, kPortIndexOutput),
+                          (status_t)OK);
+ 
+-#ifdef MTK_HARDWARE
+-                if (data2 == OMX_IndexVendorMtkOmxVdecGetAspectRatio) {
+-                    ALOGE ("@@ GOT OMX_IndexVendorMtkOmxVdecGetAspectRatio");
+-                    OMX_S32 aspectRatio = 0;
+-                    if (OK == mCodec->mOMX->getConfig(mCodec->mNode, OMX_IndexVendorMtkOmxVdecGetAspectRatio, &aspectRatio, sizeof(aspectRatio))) {
+-                        ALOGE ("@@ AspectRatioWidth (%d), AspectRatioHeight(%d)", (aspectRatio & 0xFFFF0000) >> 16, (aspectRatio & 0x0000FFFF));
+-                        mCodec->mVideoAspectRatioWidth = ((aspectRatio & 0xFFFF0000) >> 16);
+-                        mCodec->mVideoAspectRatioHeight = (aspectRatio & 0x0000FFFF);
+-                    }
+-                }
+-#endif
+                 mCodec->freeOutputBuffersNotOwnedByComponent();
+ 
+                 mCodec->changeState(mCodec->mOutputPortSettingsChangedState);
+ 
+-#ifdef MTK_HARDWARE
+-                if (data2 == OMX_IndexVendorMtkOmxVdecGetAspectRatio) {
+-
+-                    sp<AMessage> reply =
+-                        new AMessage(kWhatOutputBufferDrained, mCodec->id());
+-                    mCodec->sendFormatChange(reply);
+-                }
+-#endif
+ 
+                 bool isVideo = mCodec->mComponentName.find("video") != -1;
+                 if (isVideo) {
+diff --git a/media/libstagefright/OMXCodec.cpp b/media/libstagefright/OMXCodec.cpp
+index f590be185..c045b5ef7 100644
+--- a/media/libstagefright/OMXCodec.cpp
++++ b/media/libstagefright/OMXCodec.cpp
+@@ -1916,15 +1916,10 @@ OMXCodec::OMXCodec(
+       mDolbyProcessedAudioStateChanged(false),
+ #endif // DOLBY_END
+ #ifdef MTK_HARDWARE
+-      mIsVideoDecoder(false),
+-      mIsVideoEncoder(false),
+       mInputBufferPoolMemBase(NULL),
+       mOutputBufferPoolMemBase(NULL),
+       mMemHeapBase(NULL),
+-      mPropFlags(0),
+       mSupportsPartialFrames(false),
+-      mVideoAspectRatioWidth(1),
+-      mVideoAspectRatioHeight(1),
+       mIsVENCTimelapseMode(false),
+ #endif
+       mNativeWindow(
+@@ -1939,30 +1934,6 @@ OMXCodec::OMXCodec(
+ 
+     setComponentRole();
+ 
+-#ifdef MTK_HARDWARE
+-    if (false == mIsEncoder) {
+-        if ((!strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG2, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP9, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP8, mime))) {
+-            mIsVideoDecoder = true;
+-
+-            char value[PROPERTY_VALUE_MAX];
+-            property_get("omxcodec.video.input.error.rate", value, "0.0");
+-            mVideoInputErrorRate = atof(value);
+-            if (mVideoInputErrorRate > 0) {
+-                mPropFlags |= OMXCODEC_ENABLE_VIDEO_INPUT_ERROR_PATTERNS;
+-            }
+-            ALOGD ("mVideoInputErrorRate(%f)", mVideoInputErrorRate);
+-        }
+-    }
+-    else {
+-        if ((!strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mime))) {
+-            mIsVideoEncoder = true;
+ 
+ #ifdef MTK_HARDWARE  // for Camera recording
+             mCameraMeta = new MetaData;
+@@ -1971,11 +1942,6 @@ OMXCodec::OMXCodec(
+                 mQuirks &= ~kAvoidMemcopyInputRecordingFrames;
+             }
+ #endif
+-        }
+-    }
+-
+-    ALOGD ("!@@!>> create tid (%d) OMXCodec mOMXLivesLocally=%d, mIsVideoDecoder(%d), mIsVideoEncoder(%d), mime(%s)", gettid(), mOMXLivesLocally, mIsVideoDecoder, mIsVideoEncoder, mime);
+-#endif
+ 
+ }
+ 
+@@ -2143,7 +2109,7 @@ OMXCodec::~OMXCodec() {
+         mMemHeapBase = NULL;
+     }
+ 
+-    ALOGD ("!@@!>> destroy tid (%d) OMXCodec mOMXLivesLocally=%d, mIsVideoDecoder(%d), mIsVideoEncoder(%d)", gettid(), mOMXLivesLocally, mIsVideoDecoder, mIsVideoEncoder);
++//    ALOGD ("!@@!>> destroy tid (%d) OMXCodec mOMXLivesLocally=%d, mIsVideoDecoder(%d), mIsVideoEncoder(%d)", gettid(), mOMXLivesLocally, mIsVideoDecoder, mIsVideoEncoder);
+ #endif
+ 
+ }
+@@ -2153,23 +2119,6 @@ status_t OMXCodec::init() {
+ 
+     CHECK_EQ((int)mState, (int)LOADED);
+ 
+-#ifdef MTK_HARDWARE
+-    OMX_PARAM_PORTDEFINITIONTYPE def;
+-    const char *mime = NULL;
+-    int32_t width,height;
+-    sp<MetaData> meta = mSource->getFormat();
+-    CHECK(meta->findCString(kKeyMIMEType, &mime));
+-
+-       if (mIsVideoEncoder && (mCameraMeta.get() != NULL) && (mFlags & kOnlySubmitOneInputBufferAtOneTime) &&
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mMIME) || !strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mMIME) || !strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mMIME))) {
+-            // Timelapse mode
+-            ALOGD ("Set timelapse mode");
+-            OMX_BOOL bTimeLapseEnabled = OMX_TRUE;
+-            status_t err2 = mOMX->setParameter(mNode, OMX_IndexVendorMtkOmxVencSetTimelapseMode, &bTimeLapseEnabled, sizeof(bTimeLapseEnabled));
+-            CHECK_EQ((int)err2, (int)OK);
+-            mIsVENCTimelapseMode = true;
+-        }
+-#endif //MTK_HARDWARE
+     status_t err;
+     if (!(mQuirks & kRequiresLoadedToIdleAfterAllocation)) {
+         err = mOMX->sendCommand(mNode, OMX_CommandStateSet, OMX_StateIdle);
+@@ -2260,7 +2209,13 @@ status_t OMXCodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+     if (def.nBufferSize != 0 && def.nBufferCountActual > SIZE_MAX / def.nBufferSize) {
+         return BAD_VALUE;
+     }
++#ifdef MTK_HARDWARE
++    OMX_U32 memoryAlign = 32;
++    size_t totalSize = def.nBufferCountActual *
++        ((def.nBufferSize + (memoryAlign - 1))&(~(memoryAlign - 1)));
++#else
+     size_t totalSize = def.nBufferCountActual * def.nBufferSize;
++#endif
+     mDealer[portIndex] = new MemoryDealer(totalSize, "OMXCodec");
+ 
+     for (OMX_U32 i = 0; i < def.nBufferCountActual; ++i) {
+@@ -2471,9 +2426,6 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
+         return err;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    initNativeWindowCrop();
+-#endif //MTK_HARDWARE
+     err = applyRotation();
+     if (err != OK) {
+         return err;
+@@ -3218,31 +3170,7 @@ void OMXCodec::onEvent(OMX_EVENTTYPE event, OMX_U32 data1, OMX_U32 data2) {
+         {
+             CODEC_LOGE("OMX_EventError(0x%08x, %u)", data1, data2);
+ 
+-#ifdef MTK_HARDWARE
+-            if((OMX_S32)data1 == OMX_ErrorStreamCorrupt)
+-            {
+-                ALOGW("OMXCodec::onEvent--OMX Error Stream Corrupt!!");
+-                if(mIsVideoEncoder){
+-                    ALOGW("OMXCodec::onEvent--Video encoder error");
+-                    mFinalStatus = ERROR_UNSUPPORTED_VIDEO;
+-            setState(ERROR);
+-                }
+-            }
+-            else
+-            {
+-                if (mIsVideoDecoder && (OMX_S32)data1 == OMX_ErrorBadParameter) {
+-                    ALOGW("OMXCodec::onEvent--OMX Bad Parameter!!");
+-                    mFinalStatus = ERROR_UNSUPPORTED_VIDEO;
+-                }
+-				if(!mIsEncoder && !mIsVideoDecoder && (OMX_S32)data1 == OMX_ErrorBadParameter){
+-					ALOGW("OMXCodec::onEvent--Audio OMX Bad Parameter!!");
+-					mFinalStatus = ERROR_UNSUPPORTED_AUDIO;
+-				}
+-                setState(ERROR);
+-            }
+-#else
+             setState(ERROR);
+-#endif //MTK_HARDWARE
+             break;
+         }
+ 
+@@ -3251,43 +3179,8 @@ void OMXCodec::onEvent(OMX_EVENTTYPE event, OMX_U32 data1, OMX_U32 data2) {
+             CODEC_LOGV("OMX_EventPortSettingsChanged(port=%u, data2=0x%08x)",
+                        data1, data2);
+ 
+-#ifdef MTK_HARDWARE
+-            if (data2 == 0 || data2 == OMX_IndexParamPortDefinition || data2 == OMX_IndexVendorMtkOmxVdecGetAspectRatio) {
+-#else
+             if (data2 == 0 || data2 == OMX_IndexParamPortDefinition) {
+-#endif //MTK_HARDWARE
+-                // There is no need to check whether mFilledBuffers is empty or not
+-                // when the OMX_EventPortSettingsChanged is not meant for reallocating
+-                // the output buffers.
+-                if (data1 == kPortIndexOutput) {
+-#ifdef MTK_HARDWARE
+-                    mFilledBuffers.clear();
+-#else
+-                    CHECK(mFilledBuffers.empty());
+-#endif //MTK_HARDWARE
+-                }
+-#ifdef MTK_HARDWARE
+-                if (mState == EXECUTING_TO_IDLE)//Bruce, do nothing after stop
+-                {
+-                    ALOGE("Get port_setting_changed_event after stop!");
+-                    break;
+-                }
+-                onPortSettingsChanged(data1);
+-#else
+                 onPortSettingsChanged(data1);
+-#endif //MTK_HARDWARE
+-
+-            #ifdef MTK_HARDWARE
+-                if (data2 == OMX_IndexVendorMtkOmxVdecGetAspectRatio) {
+-                    ALOGE ("@@ GOT OMX_IndexVendorMtkOmxVdecGetAspectRatio");
+-                    OMX_S32 aspectRatio = 0;
+-                    if (OK == mOMX->getConfig(mNode, OMX_IndexVendorMtkOmxVdecGetAspectRatio, &aspectRatio, sizeof(aspectRatio))) {
+-                        ALOGE ("@@ AspectRatioWidth (%d), AspectRatioHeight(%d)", (aspectRatio & 0xFFFF0000) >> 16, (aspectRatio & 0x0000FFFF));
+-                        mVideoAspectRatioWidth = ((aspectRatio & 0xFFFF0000) >> 16);
+-                        mVideoAspectRatioHeight = (aspectRatio & 0x0000FFFF);
+-                    }
+-                }
+-            #endif
+             } else if (data1 == kPortIndexOutput &&
+                         (data2 == OMX_IndexConfigCommonOutputCrop ||
+                          data2 == OMX_IndexConfigCommonScale)) {
+@@ -3994,9 +3887,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 
+     status_t err;
+ 
+-#ifdef MTK_HARDWARE
+-    bool isPartialFrame = false;
+-#endif //MTK_HARDWARE
+     bool signalEOS = false;
+     int64_t timestampUs = 0;
+ 
+@@ -4063,12 +3953,7 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+         size_t remainingBytes = info->mSize - offset;
+ 
+         if (srcBuffer->range_length() > remainingBytes) {
+-#ifdef MTK_HARDWARE
+-            // don't fail if codec supports partial frames
+-            if (offset == 0 && !mSupportsPartialFrames) {
+-#else //MTK_HARDWARE
+             if (offset == 0) {
+-#endif //MTK_HARDWARE
+                 CODEC_LOGE(
+                      "Codec's input buffers are too small to accomodate "
+                      "buffer read from source (info->mSize = %d, srcLength = %d)",
+@@ -4081,50 +3966,12 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+                 return false;
+             }
+ 
+-#ifdef MTK_HARDWARE
+-            if (offset != 0) {
+             mLeftOverBuffer = srcBuffer;
+             break;
+-        }
+-            ALOGD("OMXCodec: split big input buffer %d to %d",
+-                    srcBuffer->range_length(), remainingBytes);
+-            // split input buffer
+-            bool needOwner = srcBuffer->refcount() == 0;
+-            mLeftOverBuffer = srcBuffer;
+-            srcBuffer = mLeftOverBuffer->clone();
+-            srcBuffer->set_range(mLeftOverBuffer->range_offset(), remainingBytes);
+-            mLeftOverBuffer->set_range(mLeftOverBuffer->range_offset() + remainingBytes,
+-                    mLeftOverBuffer->range_length() - remainingBytes);
+-            if (needOwner) {
+-                // make a owner for MediaBuffer to help release
+-                mLeftOverBuffer->setObserver(&this->mOMXPartialBufferOwner);
+-                mLeftOverBuffer->add_ref();
+-            }
+-            isPartialFrame = true;
+-#else
+-            mLeftOverBuffer = srcBuffer;
+-            break;
+-#endif // #ifdef MTK_HARDWARE
+         }
+ 
+         bool releaseBuffer = true;
+ 
+-#ifdef MTK_HARDWARE
+-        if (mIsEncoder && (mQuirks & kAvoidMemcopyInputRecordingFrames)) {
+-                CHECK(mOMXLivesLocally && offset == 0);
+-
+-                OMX_BUFFERHEADERTYPE *header =
+-                    (OMX_BUFFERHEADERTYPE *)info->mBuffer;
+-
+-                CHECK(header->pBuffer == info->mData);
+-
+-                header->pBuffer =
+-                    (OMX_U8 *)srcBuffer->data() + srcBuffer->range_offset();
+-
+-                releaseBuffer = false;
+-                info->mMediaBuffer = srcBuffer;
+-        } else {
+-#endif
+ 
+         if (mFlags & kStoreMetaDataInVideoBuffers) {
+                 releaseBuffer = false;
+@@ -4181,7 +4028,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+                     srcBuffer->range_length());
+ #endif // USE_SAMSUNG_COLORFORMAT
+         }
+-        }
+ 
+         int64_t lastBufferTimeUs;
+         CHECK(srcBuffer->meta_data()->findInt64(kKeyTime, &lastBufferTimeUs));
+@@ -4263,10 +4109,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 	interlaceFrameCount++;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    if (isPartialFrame)
+-        flags = 0;
+-#endif //MTK_HARDWARE
+ 
+     if (signalEOS) {
+         flags |= OMX_BUFFERFLAG_EOS;
+@@ -4296,12 +4138,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+         // to use it to signal EOS to the codec.
+         info = findEmptyInputBuffer();
+     }
+-#ifdef MTK_HARDWARE
+-    if (mPortStatus[kPortIndexInput] == SHUTTING_DOWN) {
+-        CODEC_LOGI("input port in shutdown mode");
+-        return false;
+-    }
+-#endif //MTK_HARDWARE
+ 
+     PLAYER_STATS(profileStartOnce, STATS_PROFILE_FIRST_BUFFER(mIsVideo));
+     CODEC_LOGV("Calling emptyBuffer on buffer %p (length %d), "
+@@ -4802,46 +4638,6 @@ status_t OMXCodec::start(MetaData *meta) {
+     mFilledBuffers.clear();
+     mPaused = false;
+ 
+-#ifdef MTK_HARDWARE
+-    if (mIsEncoder) {
+-    	status_t err;
+-        if ((err = init()) != OK) {
+-            CODEC_LOGE("init failed: %d", err);
+-            return err;
+-        }
+-        params->setInt32(kKeyNumBuffers, mPortBuffers[kPortIndexInput].size());
+-        err = mSource->start(params.get());
+-        if (err != OK) {
+-            CODEC_LOGE("source failed to start: %d", err);
+-            stopOmxComponent_l();
+-        }
+-        return err;
+-    }
+-    status_t err = mSource->start(params.get());
+-
+-    if (err != OK) {
+-        return err;
+-    }
+-    if (!strncmp("OMX.MTK.", mComponentName, 8)) {
+-        OMX_BOOL value;
+-        // check if codec supports partial frames input
+-        status_t err = mOMX->getParameter(mNode,
+-                (OMX_INDEXTYPE)OMX_IndexVendorMtkOmxPartialFrameQuerySupported,
+-                &value, sizeof(value));
+-        mSupportsPartialFrames = value;
+-        if (err != OK) {
+-            mSupportsPartialFrames = false;
+-        }
+-        ALOGI("mSupportsPartialFrames %d err %d ", mSupportsPartialFrames, err);
+-    }
+-
+-    err = init();
+-    if (err != OK) {
+-	ALOGE("line=%d,err:%d,init fail,stop mSource",__LINE__, err);
+-	mSource->stop();
+-    }
+-    return err;
+-#else //MTK_HARDWARE
+     status_t err;
+     if (mIsEncoder) {
+         // Calling init() before starting its source so that we can configure,
+@@ -4875,7 +4671,6 @@ status_t OMXCodec::start(MetaData *meta) {
+         stopOmxComponent_l();
+     }
+     return err;
+-#endif //MTK_HARDWARE
+ }
+ 
+ status_t OMXCodec::stop() {
+@@ -5726,12 +5521,6 @@ if (video_def->nFrameHeight == 1072) {
+     if (mSource->getFormat()->findInt32(kKeyRotation, &rotationDegrees)) {
+         mOutputFormat->setInt32(kKeyRotation, rotationDegrees);
+     }
+-#ifdef MTK_HARDWARE
+-    if (mIsVideoDecoder) {
+-        mOutputFormat->setInt32(kKeyAspectRatioWidth, mVideoAspectRatioWidth);
+-        mOutputFormat->setInt32(kKeyAspectRatioHeight, mVideoAspectRatioHeight);
+-    }
+-#endif //MTK_HARDWARE
+ }
+ 
+ status_t OMXCodec::pause() {
+-- 
+2.15.1
+

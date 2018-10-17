@@ -1,0 +1,1888 @@
+From 326f69693de6629d72eebf59424860191d68b5de Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:49:59 +0200
+Subject: [PATCH 10/18] [MTK] Use hw encoder only for camera. Clean
+ OmxCodec.cpp
+
+---
+ .../libmediaplayerservice/StagefrightRecorder.cpp  |    8 +
+ media/libstagefright/MediaCodecSource.cpp          |    6 +
+ media/libstagefright/OMXCodec.cpp                  | 1330 +-------------------
+ 3 files changed, 82 insertions(+), 1262 deletions(-)
+
+diff --git a/media/libmediaplayerservice/StagefrightRecorder.cpp b/media/libmediaplayerservice/StagefrightRecorder.cpp
+index cf9603757..dcae69c20 100644
+--- a/media/libmediaplayerservice/StagefrightRecorder.cpp
++++ b/media/libmediaplayerservice/StagefrightRecorder.cpp
+@@ -1705,6 +1705,14 @@ status_t StagefrightRecorder::setupVideoEncoder(
+             break;
+     }
+ 
++	// force hw video encoder for camera
++    if (mVideoSource == VIDEO_SOURCE_CAMERA) {
++        AString mime;
++        CHECK(format->findString("mime", &mime));
++        mime.append("_cam");
++        format->setString("mime", mime);
++    }
++
+     if (cameraSource != NULL) {
+         sp<MetaData> meta = cameraSource->getFormat();
+ 
+diff --git a/media/libstagefright/MediaCodecSource.cpp b/media/libstagefright/MediaCodecSource.cpp
+index 7c81570ad..0ca4c7a1d 100644
+--- a/media/libstagefright/MediaCodecSource.cpp
++++ b/media/libstagefright/MediaCodecSource.cpp
+@@ -454,6 +454,12 @@ status_t MediaCodecSource::initEncoder() {
+                 mCodecLooper, outputMIME.c_str(), true /* encoder */);
+     }
+ 
++	// remove camera tag from mime
++    if (outputMIME.endsWith("_cam")) {
++        outputMIME.erase(outputMIME.size() - 4, 4);
++        mOutputFormat->setString("mime", outputMIME);
++    }
++
+     if (mEncoder == NULL) {
+         return NO_INIT;
+     }
+diff --git a/media/libstagefright/OMXCodec.cpp b/media/libstagefright/OMXCodec.cpp
+index 9d7a3a007..f590be185 100644
+--- a/media/libstagefright/OMXCodec.cpp
++++ b/media/libstagefright/OMXCodec.cpp
+@@ -152,10 +152,6 @@ static int calc_plane(int width, int height)
+ }
+ #endif // USE_SAMSUNG_COLORFORMAT
+ 
+-#ifdef MTK_HARDWARE
+-const static int64_t VDeckBufferFilledEventTimeOutNs = 50000000000LL;// video decode need too much time
+-const static int64_t kPreRollTimeOutUs = 3000000LL;//pre roll time out
+-#endif
+ // Treat time out as an error if we have not received any output
+ // buffers after 3 seconds.
+ const static int64_t kBufferFilledEventTimeOutNs = 3000000000LL;
+@@ -339,6 +335,17 @@ void OMXCodec::findMatchingCodecs(
+         return;
+     }
+ 
++	AString *tempMime = new AString(mime);
++    if (tempMime->endsWith("_cam")) {
++        // remove camera tag from mime
++        tempMime->erase(tempMime->size() - 4, 4);
++        mime = tempMime->c_str();
++    }
++    else {
++        // no camera recording, prefer software codecs
++        flags |= kPreferSoftwareCodecs;
++    }
++
+     size_t index = 0;
+ 
+ #ifdef ENABLE_AV_ENHANCEMENTS
+@@ -441,15 +448,6 @@ uint32_t OMXCodec::getComponentQuirks(
+     }
+ 
+ #ifdef MTK_HARDWARE
+-    if (info->hasQuirk("decoder-lies-about-number-of-channels")) {
+-        quirks |= kDecoderLiesAboutNumberOfChannels;
+-    }
+-    if (info->hasQuirk("supports-multiple-frames-per-input-buffer")) {
+-        quirks |= kSupportsMultipleFramesPerInputBuffer;
+-    }
+-    if (info->hasQuirk("wants-NAL-fragments")) {
+-        quirks |= kWantsNALFragments;
+-    }
+     if (info->hasQuirk("avoid-memcpy-input-recording-frames")) {
+         quirks |= kAvoidMemcopyInputRecordingFrames;
+     }
+@@ -526,15 +524,6 @@ sp<MediaSource> OMXCodec::Create(
+         flags |= kIgnoreCodecSpecificData;
+         flags |= kUseSecureInputBuffers;
+     }
+-#ifdef MTK_HARDWARE
+-    int32_t requiresMaxFBuffers;
+-    if (source->getFormat()->findInt32(
+-                kKeyRequiresMaxFBuffers,
+-                &requiresMaxFBuffers)
+-            && requiresMaxFBuffers) {
+-        flags |= kUseMaxOutputBuffers;
+-    }
+-#endif //MTK_HARDWARE
+ 
+     const char *mime;
+     bool success = meta->findCString(kKeyMIMEType, &mime);
+@@ -838,44 +827,13 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
+     ALOGV("configureCodec protected=%d",
+          (mFlags & kEnableGrallocUsageProtected) ? 1 : 0);
+ 
+-#ifdef MTK_HARDWARE // must be verified!!
+-	//qian
+- 	void* pTs=NULL;
+-	CHECK(meta!=NULL);
+-	if(meta->findPointer(kkeyOmxTimeSource, &pTs)==true)
+-	{
+-		CHECK(pTs!=NULL);
+-		 mOMX->setParameter(
+-		 mNode, OMX_IndexVendorMtkOmxVdecTimeSource, pTs, sizeof(void*));
+-    }
+-#endif
+-
+     if (!(mFlags & kIgnoreCodecSpecificData)) {
+         uint32_t type;
+         const void *data;
+         size_t size;
+-#ifdef MTK_HARDWARE//check VOS first, than esds
+-		if (meta->findData(kKeyMPEG4VOS, &type, &data, &size)) { //MPEG4 raw codec info
+-            addCodecSpecificData(data, size);
+-		}
+-		else if (meta->findData(kKeyESDS, &type, &data, &size))
+-#else
+-        if (meta->findData(kKeyESDS, &type, &data, &size))
+-#endif //MTK_HARDWARE
+- {
++        if (meta->findData(kKeyESDS, &type, &data, &size)) {
+             ESDS esds((const char *)data, size);
+-#ifdef MTK_HARDWARE
+-			{
+-				status_t err = esds.InitCheck();
+-				if (err != OK)
+-				{
+-					ALOGE("esds.InitCheck() ERROR %d!!!", err);
+-					return err;
+-				}
+-			}
+-#else
+             CHECK_EQ(esds.InitCheck(), (status_t)OK);
+-#endif //MTK_HARDWARE
+ 
+             const void *codec_specific_data;
+             size_t codec_specific_data_size;
+@@ -908,11 +866,6 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
+             CODEC_LOGI(
+                     "AVC profile = %u (%s), level = %u",
+                     profile, AVCProfileToString(profile), level);
+-#ifdef MTK_HARDWARE
+-        } else if (meta->findData(kKeyCodecConfigInfo, &type, &data, &size)) {
+-            ALOGI("OMXCodec::configureCodec--config Codec Info for AAC");
+-            addCodecSpecificData(data, size);
+-#endif //MTK_HARDWARE
+         } else if (meta->findData(kKeyHVCC, &type, &data, &size)) {
+             // Parse the HEVCDecoderConfigurationRecord
+ 
+@@ -976,45 +929,6 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
+             isADTS = false;
+         }
+ 
+-#ifdef MTK_HARDWARE
+-        if (!strcmp(mComponentName, "OMX.MTK.AUDIO.DECODER.AAC"))
+-        {
+-            bool bIsAACADIF = false;
+-            int32_t nIsAACADIF;
+-            if (meta->findInt32(kKeyIsAACADIF, &nIsAACADIF))
+-            {
+-                if(0 == nIsAACADIF)
+-                    bIsAACADIF = false;
+-                else
+-                    bIsAACADIF = true;
+-            }
+-            status_t errAAC;
+-            if(bIsAACADIF)
+-            {
+-                OMX_AUDIO_PARAM_AACPROFILETYPE profileAAC;
+-                InitOMXParams(&profileAAC);
+-                profileAAC.nPortIndex = kPortIndexInput;
+-                errAAC = mOMX->getParameter(
+-                    mNode, OMX_IndexParamAudioAac, &profileAAC, sizeof(profileAAC));
+-                CHECK_EQ((status_t)OK, errAAC);
+-                profileAAC.nChannels = numChannels;
+-                profileAAC.nSampleRate = sampleRate;
+-                profileAAC.eAACStreamFormat = OMX_AUDIO_AACStreamFormatADIF;
+-                errAAC = mOMX->setParameter(
+-                    mNode, OMX_IndexParamAudioAac, &profileAAC, sizeof(profileAAC));
+-            }
+-            else
+-            {
+-                errAAC = setAACFormat(numChannels, sampleRate, bitRate, aacProfile, isADTS);
+-            }
+-            if (errAAC != OK)
+-            {
+-                CODEC_LOGE("setAACFormat() failed (errAAC = %d)", errAAC);
+-                return errAAC;
+-            }
+-        }
+-        else {
+-#endif //#ifdef MTK_HARDWARE
+         status_t err = setAACFormat(numChannels, sampleRate, bitRate, aacProfile, isADTS);
+         if (err != OK) {
+             CODEC_LOGE("setAACFormat() failed (err = %d)", err);
+@@ -1031,9 +945,6 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
+             addCodecSpecificData(data, size);
+         }
+ #endif
+-#ifdef MTK_HARDWARE
+-        }
+-#endif //#ifdef MTK_HARDWARE
+     } else if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_MPEG, mMIME)) {
+         int32_t numChannels, sampleRate;
+         if (meta->findInt32(kKeyChannelCount, &numChannels)
+@@ -1135,26 +1046,7 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
+     if (meta->findInt32(kKeyMaxInputSize, &maxInputSize)) {
+         setMinBufferSize(kPortIndexInput, (OMX_U32)maxInputSize);
+     }
+-#ifdef MTK_HARDWARE
+-    {
+-        OMX_PARAM_PORTDEFINITIONTYPE def;
+-        InitOMXParams(&def);
+-        def.nPortIndex = kPortIndexOutput;
+-        status_t err = mOMX->getParameter(
+-            mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        //CHECK_EQ(err, (status_t)OK);
+ 
+-        if (def.eDomain == OMX_PortDomainVideo)
+-        {
+-            OMX_VIDEO_PORTDEFINITIONTYPE *video_def = &def.format.video;
+-            if ( video_def->nFrameHeight == 0 || video_def->nFrameWidth == 0)
+-            {
+-                ALOGE("%s nFrameHeight = %d  nFrameWidth = %d return bad value",__FUNCTION__,video_def->nFrameHeight,video_def->nFrameWidth);
+-                return BAD_VALUE;
+-            }
+-        }
+-    }
+-#endif
+     initOutputFormat(meta);
+ 
+     if ((mFlags & kClientNeedsFramebuffer)
+@@ -1313,15 +1205,6 @@ static size_t getFrameSize(
+ #ifdef USE_SAMSUNG_COLORFORMAT
+         case OMX_SEC_COLOR_FormatNV12TPhysicalAddress:
+         case OMX_SEC_COLOR_FormatNV12LPhysicalAddress:
+-#endif
+-#ifdef MTK_HARDWARE
+-        /*
+-         * FIXME: We use this FrameSize for temp solution
+-         * in order to check functionality,
+-         * and we need to get FrameSize accurately in the future
+-         */
+-        case OMX_MTK_COLOR_FormatYV12:
+-        case OMX_COLOR_FormatVendorMTKYUV:
+ #endif
+             return (width * height * 3) / 2;
+ #ifdef USE_SAMSUNG_COLORFORMAT
+@@ -1555,8 +1438,8 @@ status_t OMXCodec::setupErrorCorrectionParameters() {
+     }
+ 
+     errorCorrectionType.bEnableHEC = OMX_FALSE;
+-    errorCorrectionType.bEnableResync = OMX_TRUE;
+-    errorCorrectionType.nResynchMarkerSpacing = 256;
++    errorCorrectionType.bEnableResync = OMX_FALSE;
++    errorCorrectionType.nResynchMarkerSpacing = 0;
+     errorCorrectionType.bEnableDataPartitioning = OMX_FALSE;
+     errorCorrectionType.bEnableRVLC = OMX_FALSE;
+ 
+@@ -2025,9 +1908,6 @@ OMXCodec::OMXCodec(
+       mSeekMode(ReadOptions::SEEK_CLOSEST_SYNC),
+       mTargetTimeUs(-1),
+       mOutputPortSettingsChangedPending(false),
+-#ifdef MTK_HARDWARE
+-      mIsHttpStreaming(false),
+-#endif
+       mSkipCutBuffer(NULL),
+       mLeftOverBuffer(NULL),
+       mPaused(false),
+@@ -2036,21 +1916,16 @@ OMXCodec::OMXCodec(
+       mDolbyProcessedAudioStateChanged(false),
+ #endif // DOLBY_END
+ #ifdef MTK_HARDWARE
+-      mIsVideoDecoder (false),
++      mIsVideoDecoder(false),
+       mIsVideoEncoder(false),
+       mInputBufferPoolMemBase(NULL),
+       mOutputBufferPoolMemBase(NULL),
+       mMemHeapBase(NULL),
+       mPropFlags(0),
+-      mMaxQueueBufferNum(0),
+-      mQueueWaiting(false),
+       mSupportsPartialFrames(false),
+       mVideoAspectRatioWidth(1),
+       mVideoAspectRatioHeight(1),
+       mIsVENCTimelapseMode(false),
+-      mPreRollStartTime(-1),
+-      mRTSPOutputTimeoutUS(-1),
+-      mHTTPOutputTimeoutUS(-1),
+ #endif
+       mNativeWindow(
+               (!strncmp(componentName, "OMX.google.", 11)
+@@ -2070,7 +1945,8 @@ OMXCodec::OMXCodec(
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mime)) ||
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mime)) ||
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG2, mime)) ||
+-            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VPX, mime))) {
++            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP9, mime)) ||
++            (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VP8, mime))) {
+             mIsVideoDecoder = true;
+ 
+             char value[PROPERTY_VALUE_MAX];
+@@ -2154,10 +2030,6 @@ void OMXCodec::setComponentRole(
+             "video_decoder.mpeg4", NULL },
+         { MEDIA_MIMETYPE_VIDEO_H263,
+             "video_decoder.h263", "video_encoder.h263" },
+-#ifdef MTK_HARDWARE
+-        { MEDIA_MIMETYPE_VIDEO_VPX,
+-            "video_decoder.vpx", "video_encoder.vpx" },
+-#endif //MTK_HARDWARE
+         { MEDIA_MIMETYPE_VIDEO_VP8,
+             "video_decoder.vp8", "video_encoder.vp8" },
+         { MEDIA_MIMETYPE_VIDEO_VP9,
+@@ -2233,9 +2105,6 @@ void OMXCodec::setComponentRole() {
+ }
+ 
+ OMXCodec::~OMXCodec() {
+-#ifdef MTK_HARDWARE
+-    CHECK_EQ(mQueueWaiting, false);
+-#endif
+     mSource.clear();
+ 
+     CHECK(mState == LOADED || mState == ERROR || mState == LOADED_TO_IDLE);
+@@ -2290,29 +2159,8 @@ status_t OMXCodec::init() {
+     int32_t width,height;
+     sp<MetaData> meta = mSource->getFormat();
+     CHECK(meta->findCString(kKeyMIMEType, &mime));
+-    if (!strcasecmp(MEDIA_MIMETYPE_VIDEO_VPX, mime)) { // Morris Yang add for VP8
+-        meta->findInt32(kKeyWidth, &width);
+-        meta->findInt32(kKeyHeight, &height);
+-
+-        ALOGD ("Set VP8 bitstream size. width=%d, height=%d", width, height);
+-        InitOMXParams(&def);
+-        def.nPortIndex = kPortIndexInput;
+-        status_t err1 = mOMX->getParameter(mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        CHECK_EQ((int)err1, (int)OK);
+ 
+-        if ((width > 720) || (height > 720)) {
+-            def.nBufferCountActual = 6;
+-            def.nBufferSize = 1024*1024;
+-        } else {
+-            def.nBufferCountActual = 6;
+-            def.nBufferSize=width*height*3>>1;
+-        }
+-
+-        err1 = mOMX->setParameter(mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        CHECK_EQ((int)err1, (int)OK);
+-        }
+-
+-        if (mIsVideoEncoder && (mCameraMeta.get() != NULL) && (mFlags & kOnlySubmitOneInputBufferAtOneTime) &&
++       if (mIsVideoEncoder && (mCameraMeta.get() != NULL) && (mFlags & kOnlySubmitOneInputBufferAtOneTime) &&
+             (!strcasecmp(MEDIA_MIMETYPE_VIDEO_MPEG4, mMIME) || !strcasecmp(MEDIA_MIMETYPE_VIDEO_H263, mMIME) || !strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mMIME))) {
+             // Timelapse mode
+             ALOGD ("Set timelapse mode");
+@@ -2349,651 +2197,26 @@ status_t OMXCodec::init() {
+ }
+ 
+ // static
+-bool OMXCodec::isIntermediateState(State state) {
+-    return state == LOADED_TO_IDLE
+-        || state == IDLE_TO_EXECUTING
+-        || state == EXECUTING_TO_IDLE
+-        || state == PAUSING
+-        || state == FLUSHING
+-        || state == IDLE_TO_LOADED
+-        || state == RECONFIGURING;
+-}
+-
+-status_t OMXCodec::allocateBuffers() {
+-    status_t err = allocateBuffersOnPort(kPortIndexInput);
+-
+-    if (err != OK) {
+-        return err;
+-    }
+-
+-    return allocateBuffersOnPort(kPortIndexOutput);
+-}
+-
+-#ifdef MTK_HARDWARE
+-status_t OMXCodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+-    switch (portIndex)
+-    {
+-        case kPortIndexInput:
+-            return allocateBuffersOnInputPort();
+-        case kPortIndexOutput:
+-            return allocateBuffersOnOutputPort();
+-
+-        default:
+-            ALOGE ("[ERROR] OMXCodec::allocateBuffersOnPort  invalid port index");
+-            break;
+-    }
+-
+-    return OK;
+-}
+-
+-
+-status_t OMXCodec::allocateBuffersOnInputPort() {
+-    status_t err = OK;
+-    if (mFlags & kStoreMetaDataInVideoBuffers) {
+-        err = mOMX->storeMetaDataInBuffers(mNode, kPortIndexInput, OMX_TRUE);
+-        if (err != OK) {
+-            ALOGE("Storing meta data in video buffers is not supported");
+-            return err;
+-        }
+-
+-// for live effect recording
+-        ALOGD ("@@ allocateBuffersOnInputPort (kStoreMetaDataInVideoBuffers)");
+-        OMX_PARAM_PORTDEFINITIONTYPE def;
+-        InitOMXParams(&def);
+-        def.nPortIndex = kPortIndexInput;
+-        status_t err;
+-
+-        err = mOMX->getParameter(
+-                mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        if (err != OK) {
+-            return err;
+-        }
+-
+-        def.nBufferCountActual = 5;
+-        def.nBufferSize = 4 + sizeof (buffer_handle_t);
+-        ALOGD ("@@ def.nBufferSize(%d)", def.nBufferSize);
+-        err = mOMX->setParameter(
+-                mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-
+-        if (err != OK) {
+-            return err;
+-        }
+-
+-        for (OMX_U32 i = 0 ; i < def.nBufferCountActual ; ++i) {
+-            BufferInfo info;
+-            info.mData = NULL;
+-            info.mSize = def.nBufferSize;
+-            info.mData = NULL;
+-            IOMX::buffer_id buffer;
+-            err = mOMX->useBuffer(mNode, kPortIndexInput, (unsigned char*)info.mData, def.nBufferSize, &buffer);
+-
+-            info.mBuffer = buffer;
+-            info.mStatus = OWNED_BY_US;
+-            info.mMediaBuffer = NULL;
+-
+-            mPortBuffers[kPortIndexInput].push(info);
+-        }
+-
+-        return OK;
+-// ]
+-    }
+-
+-// for Camera recording
+-    bool bIsCameraRecording = false;
+-    int32_t prCamMode;
+-    int32_t prCamMemInfo;   //CamMemInfo_t pointer
+-    if ((mCameraMeta.get() != NULL) &&mCameraMeta->findInt32(kKeyCamMemInfo, &prCamMemInfo) && mCameraMeta->findInt32(kKeyCamMemMode, &prCamMode)) {
+-        ALOGD ("allocateBuffersOnInputPort Camera Recording Mode (%d)", prCamMode);
+-        bIsCameraRecording = true;
+-        // Morris Yang 20121203
+-        if (prCamMode == CAMERA_DISCONTINUOUS_MEM_ION_MODE) {
+-            for(uint32_t u4I = 0; u4I < ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufCount; u4I++)
+-            {
+-                ALOGD ("VdoBufVA = 0x%08x, IonFd = %d, VdoBufCount = %d, VdoBufSize = %d,\n",
+-                               ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufVA[u4I],
+-                               ((CamMemIonInfo_t*)prCamMemInfo)->IonFd[u4I],
+-                               ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufCount,
+-                               ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufSize
+-                                 );
+-            }
+-        }
+-        else {   // CAMERA_DISCONTINUOUS_MEM_VA_MODE
+-            for(uint32_t u4I = 0; u4I < ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufCount; u4I++)
+-            {
+-                ALOGD ("@@ VdoBufVA = 0x%08x, VdoBufCount = %d, VdoBufSize = %d,\n",
+-                    ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufVA[u4I],
+-                    ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufCount,
+-                    ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufSize
+-                );
+-            }
+-        }
+-    }
+-
+-    CamMCIMemInfo_t* camMCIMemInfo = NULL;
+-    if (bIsCameraRecording && mCameraMeta->findPointer(kKeyCamMCIMemInfo, (void **)&camMCIMemInfo)) {
+-        ALOGD("MCI u4Security %d, u4Coherent %d\n", camMCIMemInfo->u4Security, camMCIMemInfo->u4Coherent);
+-        if ((camMCIMemInfo->u4Security > 0) && (camMCIMemInfo->u4Coherent > 0)) {
+-            ALOGD ("Set MCI mode");
+-            OMX_BOOL bEnableMCI = OMX_TRUE;
+-            status_t err2 = mOMX->setParameter(mNode, OMX_IndexVendorMtkOmxVencSetMCIMode, &bEnableMCI, sizeof(bEnableMCI));
+-            CHECK_EQ((int)err2, (int)OK);
+-        }
+-    }
+-
+-    if (bIsCameraRecording) {
+-    	// Morris Yang 20121203
+-    	if (prCamMode == CAMERA_DISCONTINUOUS_MEM_ION_MODE) {
+-            OMX_PARAM_PORTDEFINITIONTYPE def;
+-            InitOMXParams(&def);
+-            def.nPortIndex = kPortIndexInput;
+-            status_t err;
+-
+-            err = mOMX->getParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            def.nBufferCountActual = ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufCount;
+-            def.nBufferSize = ((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufSize;
+-            err = mOMX->setParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            CODEC_LOGI ("@@ def.nBufferCountActual = %d,\n", def.nBufferCountActual);
+-
+-            for (OMX_U32 i = 0 ; i < def.nBufferCountActual ; ++i) {
+-                BufferInfo info;
+-                info.mData = NULL;
+-                info.mSize = def.nBufferSize;
+-
+-                info.mData = (void*)(((CamMemIonInfo_t*)prCamMemInfo)->u4VdoBufVA[i]);
+-                OMX_S32 fd = (OMX_S32)(((CamMemIonInfo_t*)prCamMemInfo)->IonFd[i]);
+-
+-                IOMX::buffer_id buffer;
+-                err = mOMX->useIonBuffer(mNode, kPortIndexInput, (unsigned char*)info.mData, fd, def.nBufferSize, &buffer);
+-
+-                info.mBuffer = buffer;
+-                info.mStatus = OWNED_BY_US;
+-                info.mMediaBuffer = NULL;
+-
+-                mPortBuffers[kPortIndexInput].push(info);
+-            }
+-
+-            return OK;
+-    	}
+-    	else  { // CAMERA_DISCONTINUOUS_MEM_VA_MODE
+-            OMX_PARAM_PORTDEFINITIONTYPE def;
+-            InitOMXParams(&def);
+-            def.nPortIndex = kPortIndexInput;
+-            status_t err;
+-
+-            err = mOMX->getParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            def.nBufferCountActual = ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufCount;
+-            def.nBufferSize = ((CamMemInfo_t*)prCamMemInfo)->u4VdoBufSize;
+-            err = mOMX->setParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            CODEC_LOGI ("@@ def.nBufferCountActual = %d,\n", def.nBufferCountActual);
+-
+-            for (OMX_U32 i = 0 ; i < def.nBufferCountActual ; ++i) {
+-                BufferInfo info;
+-                info.mData = NULL;
+-                info.mSize = def.nBufferSize;
+-
+-                info.mData = (void*)(((CamMemInfo_t*)prCamMemInfo)->u4VdoBufVA[i]);
+-
+-                IOMX::buffer_id buffer;
+-
+-                err = mOMX->useBuffer(mNode, kPortIndexInput, (unsigned char*)info.mData, def.nBufferSize, &buffer);
+-
+-                info.mBuffer = buffer;
+-                info.mStatus = OWNED_BY_US;
+-                info.mMediaBuffer = NULL;
+-
+-                mPortBuffers[kPortIndexInput].push(info);
+-            }
+-
+-            return OK;
+-    	}
+-    }
+-
+-    OMX_PARAM_PORTDEFINITIONTYPE def;
+-    InitOMXParams(&def);
+-    def.nPortIndex = kPortIndexInput;
+-
+-    err = mOMX->getParameter(
+-            mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-
+-    if (err != OK) {
+-        return err;
+-    }
+-
+-// alignment patch [
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    def.nBufferSize = ((def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE-1) & ~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-  #else
+-    def.nBufferSize = ((def.nBufferSize + 32-1) & ~(32-1));
+-  #endif
+-    ALOGD ("@@ [IN] def.nBufferSize = %d", def.nBufferSize);
+-// ]
+-
+-    ALOGD ("allocating %lu buffers of size %lu on input port", def.nBufferCountActual, def.nBufferSize);
+-
+-// Morris Yang alignment patch [
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    size_t totalSize = def.nBufferCountActual * (((def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE-1) & ~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1)) + MTK_BUF_ADDR_ALIGNMENT_VALUE);
+-  #else
+-    size_t totalSize = def.nBufferCountActual * ((def.nBufferSize + 32-1) & ~(32-1));
+-  #endif
+-    ALOGD ("@@ Input totalSize = %d", totalSize);
+-// ]
+-
+-    if (mIsVideoEncoder) {
+-        if (mOMXLivesLocally) {
+-            mMemHeapBase = new MemoryHeapBase(totalSize, 0, "M4UMemPool");
+-            if (mMemHeapBase == NULL) {
+-                ALOGE ("[ERROR][M4U] M4UMemPool error: could not create master heap!");
+-                return UNKNOWN_ERROR;
+-            }
+-            mInputBufferPoolMemBase = (unsigned char*) mMemHeapBase->getBase();
+-            ALOGD ("mMemHeapBase, = 0x%x, mInputBufferPoolPmemBase = 0x%08X\n", mMemHeapBase.get(), (unsigned int)mInputBufferPoolMemBase);
+-            MemHeapInfo memheapinfo;
+-            memheapinfo.base = mInputBufferPoolMemBase;
+-            memheapinfo.mMemHeapBase = (int)(&mMemHeapBase);
+-            memheapinfo.size = totalSize;
+-            ALOGD ("before: base = 0x%x, mMemHeapBase = 0x%08X, size = %d", (unsigned int)memheapinfo.base, (unsigned int)memheapinfo.mMemHeapBase, (unsigned int)memheapinfo.size);
+-            sf_memheap_set_info(&memheapinfo);
+-
+-            MemHeapInfo memheapinfo_2;
+-            sf_memheap_get_info(mInputBufferPoolMemBase, &memheapinfo_2);
+-            ALOGD("after: base = 0x%x, mMemHeapBase = 0x%08X, size = %d", (unsigned int)memheapinfo_2.base, (unsigned int)memheapinfo_2.mMemHeapBase, (unsigned int)memheapinfo_2.size);
+-        }
+-        else {
+-            mMemHeapBase = new MemoryHeapBase(totalSize, 0, "M4UMemPool");
+-            if (mMemHeapBase == NULL) {
+-                ALOGE ("[ERROR][M4U] M4UMemPool error: could not create master heap!");
+-                return UNKNOWN_ERROR;
+-            }
+-            mInputBufferPoolMemBase = (unsigned char*) mMemHeapBase->getBase();
+-            ALOGD ("mMemHeapBase = 0x%08X, mInputBufferPoolPmemBase = 0x%08X, size=%d", mMemHeapBase.get(), (unsigned int)mInputBufferPoolMemBase, mMemHeapBase->getSize());
+-
+-            if (mMemHeapBase->getHeapID() < 0) {
+-                ALOGE("Error creating frame buffer heap");
+-                return UNKNOWN_ERROR;
+-            }
+-            err = mOMX->registerBuffer2(mNode, kPortIndexInput, mMemHeapBase);
+-        }
+-    }
+-    else {
+-        mDealer[kPortIndexInput] = new MemoryDealer(totalSize, "OMXCodec");
+-        sp<IMemoryHeap> pheap = mDealer[kPortIndexInput]->getMemoryHeap();
+-        if (pheap->getHeapID() < 0)
+-        {
+-            ALOGE ("Error creating input buffer heap fail.");
+-            return UNKNOWN_ERROR;
+-        }
+-    }
+-
+-    for (OMX_U32 i = 0; i < def.nBufferCountActual; ++i) {
+-        sp<IMemory> mem;
+-        BufferInfo info;
+-        info.mData = NULL;
+-        info.mSize = def.nBufferSize;
+-
+-        if (!mIsVideoEncoder) {
+-            mem = mDealer[kPortIndexInput]->allocate(def.nBufferSize);
+-            CHECK(mem.get() != NULL);
+-        } else {
+-            info.mData = mInputBufferPoolMemBase + (i * def.nBufferSize);
+-            //LOGE ("info.mData(%d) allocated from pmem (0x%x) for input port", i, info.mData);
+-        }
+-
+-        IOMX::buffer_id buffer;
+-        if ((mQuirks & kRequiresAllocateBufferOnInputPorts) || (mFlags & kUseSecureInputBuffers)) {
+-            if (mOMXLivesLocally) {
+-                mem.clear();
+-
+-                err = mOMX->allocateBuffer(
+-                        mNode, kPortIndexInput, def.nBufferSize, &buffer,
+-                        &info.mData);
+-            } else {
+-                err = mOMX->allocateBufferWithBackup(
+-                        mNode, kPortIndexInput, mem, &buffer);
+-            }
+-        }
+-        else {
+-            if (mIsVideoEncoder && mOMXLivesLocally) {
+-                err = mOMX->useBuffer(mNode, kPortIndexInput, (unsigned char*)info.mData, def.nBufferSize, &buffer);
+-            }
+-            else if (mIsVideoEncoder && !mOMXLivesLocally) {
+-                err = mOMX->useBuffer(mNode, kPortIndexInput, NULL, def.nBufferSize, (i * def.nBufferSize), &buffer);
+-            }
+-            else {
+-            err = mOMX->useBuffer(mNode, kPortIndexInput, mem, &buffer);
+-        }
+-        }
+-
+-        if (err != OK) {
+-            ALOGE("allocate_buffer_with_backup failed");
+-            return err;
+-        }
+-
+-        if (mem != NULL) {
+-// Morris Yang alignment patch [
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    OMX_U8 *ptr = static_cast<OMX_U8 *>(mem->pointer());
+-    OMX_U32 pBuffer = ((reinterpret_cast<OMX_U32>(ptr)+(MTK_BUF_ADDR_ALIGNMENT_VALUE-1))&~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-    info.mData = (void*)pBuffer;
+-  #else
+-    info.mData = mem->pointer();
+-  #endif
+-    ALOGD ("@@ Input[%d], info.mData(0x%08X)", i, info.mData);
+-// ]
+-        }
+-
+-        info.mBuffer = buffer;
+-        info.mStatus = OWNED_BY_US;
+-        info.mMem = mem;
+-        info.mMediaBuffer = NULL;
+-
+-        mPortBuffers[kPortIndexInput].push(info);
+-
+-        CODEC_LOGV("allocated buffer %p on input port", buffer);
+-    }
+-
+-    // dumpPortStatus(portIndex);
+-
+-    if (mFlags & kUseSecureInputBuffers) {
+-        Vector<MediaBuffer *> buffers;
+-        for (size_t i = 0; i < def.nBufferCountActual; ++i) {
+-            const BufferInfo &info = mPortBuffers[kPortIndexInput].itemAt(i);
+-
+-            MediaBuffer *mbuf = new MediaBuffer(info.mData, info.mSize);
+-            buffers.push(mbuf);
+-        }
+-
+-        status_t err = mSource->setBuffers(buffers);
+-
+-        if (err != OK) {
+-            for (size_t i = 0; i < def.nBufferCountActual; ++i) {
+-                buffers.editItemAt(i)->release();
+-            }
+-            buffers.clear();
+-
+-            CODEC_LOGE(
+-                    "Codec requested to use secure input buffers but "
+-                    "upstream source didn't support that.");
+-
+-            return err;
+-        }
+-    }
+-
+-    return OK;
+-}
+-
+-status_t OMXCodec::allocateBuffersOnOutputPort() {
+-    if (mNativeWindow != NULL) {
+-        return allocateOutputBuffersFromNativeWindow();
+-    }
+-
+-    if (mFlags & kEnableGrallocUsageProtected) {
+-        ALOGE("protected output buffers must be stent to an ANativeWindow");
+-        return PERMISSION_DENIED;
+-    }
+-// Morris Yang for Camera recording
+-    bool bIsCameraRecording = false;
+-    int32_t prCamMemInfo;   //CamMemInfo_t pointer
+-    if ((mCameraMeta.get() != NULL) && mCameraMeta->findInt32(kKeyCamMemInfo, &prCamMemInfo)) {
+-        ALOGD ("@@ allocateBuffersOnOutputPort (CAMERA RECORDING)");
+-        bIsCameraRecording = true;
+-    }
+-
+-    if (bIsCameraRecording) {
+-        OMX_PARAM_PORTDEFINITIONTYPE def;
+-        InitOMXParams(&def);
+-        def.nPortIndex = kPortIndexOutput;
+-        status_t err = mOMX->getParameter(
+-                mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-        if (err != OK) {
+-            return err;
+-        }
+-
+-        def.nBufferSize = ((def.nBufferSize + 32-1) & ~(32-1));
+-        ALOGD ("@@ def.nBufferSize(aligned)=%d", def.nBufferSize);
+-
+-        size_t totalSize = def.nBufferCountActual * def.nBufferSize;
+-
+-        if (mOutputBufferPoolMemBase)    // free the memory allocated before (In case of port re-config)
+-        {
+-            mMemHeapBase = NULL;
+-            mOutputBufferPoolMemBase = NULL;
+-        }
+-        mMemHeapBase = new MemoryHeapBase(totalSize, 0, "M4UMemPool");
+-        if (mMemHeapBase == NULL) {
+-            ALOGE("[ERROR][M4U] M4UMemPool error: could not create master heap!");
+-            return UNKNOWN_ERROR;
+-        }
+-        mOutputBufferPoolMemBase = (unsigned char*) mMemHeapBase->getBase();
+-        ALOGD("mMemHeapBase = 0x%08X, mOutputBufferPoolMemBase = 0x%08X, size = %d", mMemHeapBase.get(), (unsigned int)mOutputBufferPoolMemBase, mMemHeapBase->getSize());
+-
+-        if (mMemHeapBase->getHeapID() < 0) {
+-            ALOGE("Error creating frame buffer heap (M4U)");
+-            return UNKNOWN_ERROR;
+-        }
+-        for (OMX_U32 i = 0 ; i < def.nBufferCountActual ; ++i) {
+-            BufferInfo info;
+-            info.mData = NULL;
+-            info.mSize = def.nBufferSize;
+-
+-            info.mData = mOutputBufferPoolMemBase + (i * def.nBufferSize);
+-
+-            IOMX::buffer_id buffer;
+-            err = mOMX->useBuffer(mNode, kPortIndexOutput, (unsigned char*)info.mData, def.nBufferSize, &buffer);
+-
+-            info.mBuffer = buffer;
+-            info.mStatus = OWNED_BY_US;
+-            info.mMediaBuffer = new MediaBuffer(info.mData, info.mSize);
+-            info.mMediaBuffer->setObserver(this);
+-
+-            mPortBuffers[kPortIndexOutput].push(info);
+-        }
+-
+-        return OK;
+-    }
+-
+-    OMX_PARAM_PORTDEFINITIONTYPE def;
+-    InitOMXParams(&def);
+-    def.nPortIndex = kPortIndexOutput;
+-
+-    status_t err = mOMX->getParameter(
+-        mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-
+-    if (err != OK) {
+-        return err;
+-    }
+-
+-// Morris Yang alignment patch [
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    def.nBufferSize = ((def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE-1) & ~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-  #else
+-    def.nBufferSize = ((def.nBufferSize + 32-1) & ~(32-1));
+-  #endif
+-    ALOGE ("@@ [OUT] def.nBufferSize = %d", def.nBufferSize);
+-// ]
+-
+-// Morris Yang alignment patch [
+-
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    size_t totalSize = def.nBufferCountActual * def.nBufferSize + MTK_BUF_ADDR_ALIGNMENT_VALUE;
+-  #else
+-    size_t totalSize = def.nBufferCountActual * def.nBufferSize;
+-  #endif
+-        ALOGE ("@@ [OUT] totalSize = %d", totalSize);
+-// ]
+-
+-    if (mIsVideoDecoder) {
+-
+-        if (mOutputBufferPoolMemBase)    // free the memory allocated before (In case of port re-config)
+-        {
+-            mMemHeapBase = NULL;
+-            sf_memheap_remove_info (mOutputBufferPoolMemBase);
+-            mOutputBufferPoolMemBase = NULL;
+-        }
+-        mMemHeapBase = new MemoryHeapBase(totalSize, 0, "M4UMemPool");
+-        if (mMemHeapBase == NULL) {
+-            ALOGE("[ERROR][M4U] M4UMemPool error: could not create master heap!");
+-            return UNKNOWN_ERROR;
+-        }
+-        mOutputBufferPoolMemBase = (unsigned char*) mMemHeapBase->getBase();
+-        ALOGD("mMemHeapBase = 0x%08X, mOutputBufferPoolMemBase = 0x%08X, size = %d", mMemHeapBase.get(), (unsigned int)mOutputBufferPoolMemBase, mMemHeapBase->getSize());
+-
+-        if (mMemHeapBase->getHeapID() < 0) {
+-            CODEC_LOGE("Error creating frame buffer heap (M4U)");
+-            return UNKNOWN_ERROR;
+-        }
+-
+-        if(mOMXLivesLocally) {
+-            MemHeapInfo memheapinfo;
+-            memheapinfo.base = mOutputBufferPoolMemBase;
+-            memheapinfo.mMemHeapBase = (int)(&mMemHeapBase);
+-            memheapinfo.size = totalSize;
+-            ALOGD("before: base = 0x%x, mMemHeapBase = 0x%08X, size = %d", (unsigned int)memheapinfo.base, (unsigned int)memheapinfo.mMemHeapBase, (unsigned int)memheapinfo.size);
+-            sf_memheap_set_info(&memheapinfo);
+-
+-            MemHeapInfo memheapinfo_2;
+-            sf_memheap_get_info(mOutputBufferPoolMemBase, &memheapinfo_2);
+-            ALOGD("after: base = 0x%x, mMemHeapBase = 0x%08X, size = %d", (unsigned int)memheapinfo_2.base, (unsigned int)memheapinfo_2.mMemHeapBase, (unsigned int)memheapinfo_2.size);
+-        }
+-        else {
+-            err = mOMX->registerBuffer2(mNode, kPortIndexOutput, mMemHeapBase);
+-        }
+-    }
+-    else {
+-        mDealer[kPortIndexOutput] = new MemoryDealer(totalSize, "OMXCodec");
+-        sp<IMemoryHeap> pheap = mDealer[kPortIndexOutput]->getMemoryHeap();
+-        if (pheap->getHeapID() < 0)
+-        {
+-            ALOGE("Error creating output buffer heap fail.");
+-            return UNKNOWN_ERROR;
+-        }
+-        ALOGD ("OMXCodec::allocateBuffersOnOutputPort:totalSize=%d",totalSize);
+-    }
+-
+-    for (OMX_U32 i = 0; i < def.nBufferCountActual; ++i) {
+-        sp<IMemory> mem;
+-        BufferInfo info;
+-        info.mData = NULL;
+-        info.mSize = def.nBufferSize;
+-        if (!mIsVideoDecoder) {
+-            mem = mDealer[kPortIndexOutput]->allocate(def.nBufferSize);
+-            CHECK(mem.get() != NULL);
+-        } else {
+-            info.mData = mOutputBufferPoolMemBase + (i * def.nBufferSize);
+-            //CODEC_LOGD ("info.mData(%d) allocated from pmem (0x%x) for output port", i, info.mData);
+-        }
+-
+-        IOMX::buffer_id buffer;
+-        if (mQuirks & kRequiresAllocateBufferOnOutputPorts) {
+-            if (mOMXLivesLocally) {
+-                mem.clear();
+-
+-                err = mOMX->allocateBuffer(
+-                        mNode, kPortIndexOutput, def.nBufferSize, &buffer,
+-                        &info.mData);
+-            } else {
+-                err = mOMX->allocateBufferWithBackup(
+-                        mNode, kPortIndexOutput, mem, &buffer);
+-            }
+-        }
+-        else {
+-            if (mIsVideoDecoder && mOMXLivesLocally) {
+-                err = mOMX->useBuffer(mNode, kPortIndexOutput, (unsigned char*)info.mData, def.nBufferSize, &buffer);
+-            }
+-            else if (mIsVideoDecoder && !mOMXLivesLocally) {
+-                err = mOMX->useBuffer(mNode, kPortIndexOutput, NULL, def.nBufferSize, (i * def.nBufferSize), &buffer);
+-            }
+-            else{
+-                err = mOMX->useBuffer(mNode, kPortIndexOutput, mem, &buffer);
+-            }
+-        }
+-
+-        if (err != OK) {
+-            ALOGE("allocate_buffer_with_backup failed");
+-            return err;
+-        }
+-
+-        if ((mem != NULL) && !mIsVideoDecoder) {
+-// Morris Yang alignment patch [
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    OMX_U8 *ptr = static_cast<OMX_U8 *>(mem->pointer());
+-    OMX_U32 pBuffer = ((reinterpret_cast<OMX_U32>(ptr)+(MTK_BUF_ADDR_ALIGNMENT_VALUE-1))&~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-    info.mData = (void*)pBuffer;
+-  #else
+-    info.mData = mem->pointer();
+-    #endif
+-// ]
+-        }
+-
+-        info.mBuffer = buffer;
+-        info.mStatus = OWNED_BY_US;
+-        info.mMem = mem;
+-        info.mMediaBuffer = NULL;
+-
+-        if (!(mOMXLivesLocally
+-          && (mQuirks & kRequiresAllocateBufferOnOutputPorts)
+-          && (mQuirks & kDefersOutputBufferAllocation))) {
+-            // If the node does not fill in the buffer ptr at this time,
+-            // we will defer creating the MediaBuffer until receiving
+-            // the first FILL_BUFFER_DONE notification instead.
+-            info.mMediaBuffer = new MediaBuffer(info.mData, info.mSize);
+-            info.mMediaBuffer->setObserver(this);
+-        }
+-
+-        mPortBuffers[kPortIndexOutput].push(info);
++bool OMXCodec::isIntermediateState(State state) {
++    return state == LOADED_TO_IDLE
++        || state == IDLE_TO_EXECUTING
++        || state == EXECUTING_TO_IDLE
++        || state == PAUSING
++        || state == FLUSHING
++        || state == IDLE_TO_LOADED
++        || state == RECONFIGURING;
++}
+ 
+-        ALOGV("allocated buffer %p on output port", buffer);
+-    }
++status_t OMXCodec::allocateBuffers() {
++    status_t err = allocateBuffersOnPort(kPortIndexInput);
+ 
+-    sp<MetaData> meta = mSource->getFormat();
+-    int32_t delay = 0;
+-    if (!meta->findInt32(kKeyEncoderDelay, &delay)) {
+-        delay = 0;
+-    }
+-    int32_t padding = 0;
+-    if (!meta->findInt32(kKeyEncoderPadding, &padding)) {
+-        padding = 0;
+-    }
+-    int32_t numchannels = 0;
+-    if (delay + padding) {
+-        if (mOutputFormat->findInt32(kKeyChannelCount, &numchannels)) {
+-            size_t frameSize = numchannels * sizeof(int16_t);
+-            if (mSkipCutBuffer != NULL) {
+-                size_t prevbuffersize = mSkipCutBuffer->size();
+-                if (prevbuffersize != 0) {
+-                    ALOGW("Replacing SkipCutBuffer holding %d bytes", prevbuffersize);
+-                }
+-            }
+-            mSkipCutBuffer = new SkipCutBuffer(delay * frameSize, padding * frameSize);
+-        }
++    if (err != OK) {
++        return err;
+     }
+ 
+-    //dumpPortStatus(portIndex);
+-    return OK;
++    return allocateBuffersOnPort(kPortIndexOutput);
+ }
+-#else //ifndef MTK_HARDWARE
++
+ status_t OMXCodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+     const char* type = portIndex == kPortIndexInput ?
+                                     STATS_PROFILE_ALLOCATE_INPUT(mIsVideo) :
+@@ -3168,7 +2391,6 @@ status_t OMXCodec::allocateBuffersOnPort(OMX_U32 portIndex) {
+ 
+     return OK;
+ }
+-#endif
+ 
+ status_t OMXCodec::applyRotation() {
+     sp<MetaData> meta = mSource->getFormat();
+@@ -3212,53 +2434,35 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
+         return err;
+     }
+ 
+-#ifndef USE_SAMSUNG_COLORFORMAT
+-#ifdef MTK_HARDWARE
+-// change the color/pixel format for JB blobs
+-    uint32_t eHalColorFormat;
+-    switch (def.format.video.eColorFormat) {
+-        case OMX_COLOR_FormatVendorMTKYUV:
+-            eHalColorFormat = HAL_PIXEL_FORMAT_NV12_BLK;
+-            break;
+-        default:
+-            eHalColorFormat = HAL_PIXEL_FORMAT_I420;
+-            break;
+-    }
++#ifdef USE_SAMSUNG_COLORFORMAT
++    OMX_COLOR_FORMATTYPE eNativeColorFormat = def.format.video.eColorFormat;
++    setNativeWindowColorFormat(eNativeColorFormat);
+ 
+-    ALOGD ("native_window_set_buffers_geometry W(%d), H(%d), Stride(%d), SliceH(%d), eHalColorFormat(0x%08X)", def.format.video.nFrameWidth, def.format.video.nFrameHeight, def.format.video.nStride, def.format.video.nSliceHeight, eHalColorFormat);
+     err = native_window_set_buffers_geometry(
+-            mNativeWindow.get(),
+-            def.format.video.nStride,
+-            def.format.video.nSliceHeight,
+-            eHalColorFormat);
+-#else
++    mNativeWindow.get(),
++    def.format.video.nFrameWidth,
++    def.format.video.nFrameHeight,
++    eNativeColorFormat);
++#elif defined(MTK_HARDWARE)
++    OMX_U32 frameWidth = def.format.video.nFrameWidth;
++    OMX_U32 frameHeight = def.format.video.nFrameHeight;
++
++    if (!strncmp("OMX.MTK.", mComponentName, 8)) {
++        frameWidth = def.format.video.nStride;
++        frameHeight = def.format.video.nSliceHeight;
++    }
++
+     err = native_window_set_buffers_geometry(
+             mNativeWindow.get(),
+-            def.format.video.nFrameWidth,
+-            def.format.video.nFrameHeight,
++            frameWidth,
++            frameHeight,
+             def.format.video.eColorFormat);
+-#endif
+ #else
+-    OMX_COLOR_FORMATTYPE eColorFormat;
+-
+-    switch (def.format.video.eColorFormat) {
+-    case OMX_SEC_COLOR_FormatNV12TPhysicalAddress:
+-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_CUSTOM_YCbCr_420_SP_TILED;
+-        break;
+-    case OMX_COLOR_FormatYUV420SemiPlanar:
+-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_SP;
+-        break;
+-    case OMX_COLOR_FormatYUV420Planar:
+-    default:
+-        eColorFormat = (OMX_COLOR_FORMATTYPE)HAL_PIXEL_FORMAT_YCbCr_420_P;
+-        break;
+-    }
+-
+     err = native_window_set_buffers_geometry(
+             mNativeWindow.get(),
+             def.format.video.nFrameWidth,
+             def.format.video.nFrameHeight,
+-            eColorFormat);
++            def.format.video.eColorFormat);
+ #endif
+ 
+     if (err != 0) {
+@@ -3507,9 +2711,6 @@ OMXCodec::BufferInfo* OMXCodec::dequeueBufferFromNativeWindow() {
+     if (err != 0) {
+       CODEC_LOGE("dequeueBuffer failed w/ error 0x%08x", err);
+ 
+-#ifdef MTK_HARDWARE
+-      mFinalStatus = ERROR_BUFFER_DEQUEUE_FAIL;
+-#endif
+       setState(ERROR);
+       return 0;
+     }
+@@ -3701,7 +2902,6 @@ int64_t OMXCodec::getDecodingTimeUs() {
+ }
+ 
+ void OMXCodec::on_message(const omx_message &msg) {
+-#ifndef MTK_HARDWARE // remove Android 4.0 default code , Legis.
+     if (mState == ERROR) {
+         /*
+          * only drop EVENT messages, EBD and FBD are still
+@@ -3712,7 +2912,6 @@ void OMXCodec::on_message(const omx_message &msg) {
+             return;
+         }
+     }
+-#endif //MTK_HARDWARE
+ 
+     switch (msg.type) {
+         case omx_message::EVENT:
+@@ -3871,14 +3070,6 @@ void OMXCodec::on_message(const omx_message &msg) {
+                 if (msg.u.extended_buffer_data.flags & OMX_BUFFERFLAG_EOS) {
+                     CODEC_LOGV("No more output data.");
+                     mNoMoreOutputData = true;
+-#ifdef MTK_HARDWARE   //<---for omx component, the buffer flag is EOS, and buffer is empty.
+-                    ALOGD ("OMXCodec::on_message EOS received!!!!");
+-                    mTargetTimeUs=-1;
+-                    if (0==msg.u.extended_buffer_data.range_length) {
+-                        mBufferFilled.signal();
+-                        break;
+-                    }
+-#endif //--->
+                 }
+ 
+                 if (mIsEncoder && mIsVideo) {
+@@ -3887,17 +3078,9 @@ void OMXCodec::on_message(const omx_message &msg) {
+                 }
+ 
+                 if (mTargetTimeUs >= 0) {
+-#ifdef MTK_HARDWARE
+-					int64_t preRollDuration = systemTime() / 1000 - mPreRollStartTime;
+-					ALOGD("Key time=%lld, Target time=%lld, Preroll time=%lld, Preroll duration=%lld",
+-						msg.u.extended_buffer_data.timestamp, mTargetTimeUs, mPreRollStartTime, preRollDuration);
+-					if ((msg.u.extended_buffer_data.timestamp < mTargetTimeUs) && (preRollDuration < kPreRollTimeOutUs))
+-#else
+                     CHECK(msg.u.extended_buffer_data.timestamp <= mTargetTimeUs);
+ 
+-                    if (msg.u.extended_buffer_data.timestamp < mTargetTimeUs)
+-#endif //MTK_HARDWARE
+- {
++                    if (msg.u.extended_buffer_data.timestamp < mTargetTimeUs) {
+                         CODEC_LOGV(
+                                 "skipping output buffer at timestamp %lld us",
+                                 msg.u.extended_buffer_data.timestamp);
+@@ -3912,9 +3095,6 @@ void OMXCodec::on_message(const omx_message &msg) {
+                             "%lld us",
+                             msg.u.extended_buffer_data.timestamp);
+ 
+-#ifdef MTK_HARDWARE
+-					mPreRollStartTime = -1;
+-#endif //MTK_HARDWARE
+                     mTargetTimeUs = -1;
+                 }
+ 
+@@ -4386,13 +3566,7 @@ void OMXCodec::onStateChange(OMX_STATETYPE newState) {
+ 
+                 setState(IDLE_TO_EXECUTING);
+             } else {
+-#ifdef MTK_HARDWARE // modify Android 4.0 default code , Legis.
+-                if (mState != ERROR) {
+-#endif //MTK_HARDWARE
+                 CHECK_EQ((int)mState, (int)EXECUTING_TO_IDLE);
+-#ifdef MTK_HARDWARE // modify Android 4.0 default code , Legis.
+-                }
+-#endif //MTK_HARDWARE
+ 
+                 if (countBuffersWeOwn(mPortBuffers[kPortIndexInput]) !=
+                     mPortBuffers[kPortIndexInput].size()) {
+@@ -4528,11 +3702,7 @@ status_t OMXCodec::freeBuffersOnPort(
+     for (size_t i = buffers->size(); i-- > 0;) {
+         BufferInfo *info = &buffers->editItemAt(i);
+ 
+-#ifdef MTK_HARDWARE
+-        if (onlyThoseWeOwn && (info->mStatus == OWNED_BY_COMPONENT || info->mStatus == OWNED_BY_CLIENT)) {
+-#else
+         if (onlyThoseWeOwn && info->mStatus == OWNED_BY_COMPONENT) {
+-#endif
+             continue;
+         }
+ 
+@@ -4624,11 +3794,6 @@ bool OMXCodec::flushPortAsync(OMX_U32 portIndex) {
+         CHECK_EQ((int)mPortStatus[portIndex], (int)ENABLED);
+         mPortStatus[portIndex] = SHUTTING_DOWN;
+ 
+-#ifdef MTK_HARDWARE
+-    if (mQueueWaiting && kPortIndexOutput == portIndex) {
+-        mBufferSent.signal();
+-    }
+-#endif //MTK_HARDWARE
+         if ((mQuirks & kRequiresFlushCompleteEmulation)
+             && countBuffersWeOwn(mPortBuffers[portIndex])
+                 == mPortBuffers[portIndex].size()) {
+@@ -4711,11 +3876,7 @@ void OMXCodec::drainInputBuffers() {
+     if (mFlags & kUseSecureInputBuffers) {
+         Vector<BufferInfo> *buffers = &mPortBuffers[kPortIndexInput];
+         for (size_t i = 0; i < buffers->size(); ++i) {
+-#ifdef MTK_HARDWARE
+-            if (!drainAnyInputBuffer(true)
+-#else
+             if (!drainAnyInputBuffer()
+-#endif
+                     || (mFlags & kOnlySubmitOneInputBufferAtOneTime)) {
+                 break;
+             }
+@@ -4729,11 +3890,7 @@ void OMXCodec::drainInputBuffers() {
+                 continue;
+             }
+ 
+-#ifdef MTK_HARDWARE
+-            if (!drainInputBuffer(info, true)) {
+-#else
+             if (!drainInputBuffer(info)) {
+-#endif
+                 break;
+             }
+ 
+@@ -4744,41 +3901,9 @@ void OMXCodec::drainInputBuffers() {
+     }
+ }
+ 
+-#ifdef MTK_HARDWARE
+-bool OMXCodec::drainAnyInputBuffer(bool init) {
+-    return drainInputBuffer((BufferInfo *)NULL, init);
+-}
+-#else
+ bool OMXCodec::drainAnyInputBuffer() {
+     return drainInputBuffer((BufferInfo *)NULL);
+ }
+-#endif
+-
+-#ifdef MTK_HARDWARE
+-void OMXCodec::PutErrorPatterns(uint8_t *pBuffer, uint32_t length) {
+-    int error_count = 0;
+-    int _RAND_LIMIT = 32768;
+-    srand(time(0));
+-    for(int i = 0 ; i < length ; i++) {
+-        int error_mask = 0;
+-        float rand_num;
+-        for(int j = 0; j < 8; j++) {
+-            rand_num = (float)((rand()%_RAND_LIMIT)*_RAND_LIMIT+(rand()%_RAND_LIMIT))/((float)_RAND_LIMIT)/((float)_RAND_LIMIT);
+-
+-            if(rand_num > 1)
+-                CHECK(false); // assert
+-
+-            if(rand_num < mVideoInputErrorRate)
+-		    error_count++;
+-
+-		error_mask += (rand_num < mVideoInputErrorRate);
+-		error_mask <<= 1;
+-        }
+-
+-        pBuffer[i] ^= (uint8_t) error_mask;
+-    }
+-}
+-#endif
+ 
+ OMXCodec::BufferInfo *OMXCodec::findInputBufferByDataPointer(void *ptr) {
+     Vector<BufferInfo> *infos = &mPortBuffers[kPortIndexInput];
+@@ -4811,11 +3936,7 @@ OMXCodec::BufferInfo *OMXCodec::findEmptyInputBuffer() {
+     TRESPASS();
+ }
+ 
+-#ifdef MTK_HARDWARE
+-bool OMXCodec::drainInputBuffer(BufferInfo *info, bool init) {
+-#else
+ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+-#endif
+     ATRACE_CALL();
+     if (info != NULL) {
+         CHECK_EQ((int)info->mStatus, (int)OWNED_BY_US);
+@@ -4875,7 +3996,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 
+ #ifdef MTK_HARDWARE
+     bool isPartialFrame = false;
+-    bool reComputePTS = false;
+ #endif //MTK_HARDWARE
+     bool signalEOS = false;
+     int64_t timestampUs = 0;
+@@ -4921,53 +4041,7 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 
+             err = OK;
+         } else {
+-#ifdef MTK_HARDWARE
+-            // if we have enough output buffers, pause pulling source
+-            if (mMaxQueueBufferNum > 0 && !init) {
+-                // mLock must be held to get here
+-                while ((mFilledBuffers.size() > mMaxQueueBufferNum) &&
+-                        (mState == EXECUTING || mState == RECONFIGURING)) {
+-                    mQueueWaiting = true;
+-                    status_t err = mBufferSent.waitRelative(mLock, 10000000000LL);
+-                    if (err == -ETIMEDOUT) {
+-                        ALOGI("drainInputBuffer wait timeout with state %d, seek %lld",
+-                                mState, mSeekTimeUs);
+-                    }
+-                }
+-                mQueueWaiting = false;
+-                if (mSeekTimeUs >= 0 ||
+-                        (mState != EXECUTING && mState != RECONFIGURING)) {
+-                    // seek/stop during waiting
+-                    ALOGD("drainInputBuffer break with state %d, seek %lld",
+-                            mState, mSeekTimeUs);
+-                    return false;
+-                }
+-                mLock.unlock();
+-                // mSource is safe here because AwesomePlayer calls stop before dtor
+-            err = mSource->read(&srcBuffer);
+-                mLock.lock();
+-            } else
+-#endif // #ifdef MTK_HARDWARE
+-#ifdef MTK_HARDWARE
+-            {
+-                if (mIsVideoDecoder && !mIsHttpStreaming) {
+-                     mLock.unlock();
+-        }
+-#endif
+             err = mSource->read(&srcBuffer);
+-#ifdef MTK_HARDWARE
+-                if (mIsVideoDecoder && !mIsHttpStreaming) {
+-                    mLock.lock();
+-                 }
+-            }
+-#endif
+-
+-#ifdef MTK_HARDWARE
+-            if(mNoMoreOutputData)
+-            {
+-                CODEC_LOGE("Read source after no more output data done, err=0x%08x", err);//for EOS may hang
+-        }
+-#endif 
+         }
+ 
+         if (err != OK) {
+@@ -4975,18 +4049,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+             mFinalStatus = err;
+             mSignalledEOS = true;
+             mBufferFilled.signal();
+-//deal time out MTK80721 2012-03-29
+-#ifdef MTK_HARDWARE
+-            if ((!strncmp(mComponentName, "OMX.MTK.AUDIO.ENCODER", 21)  && err== TIMED_OUT))
+-            {
+-                ALOGE("OMXCodec::drainInputBuffer: time out,tid=%d",gettid());
+-                srcBuffer->release();
+-                srcBuffer = NULL;
+-                setState(ERROR);
+-                return false;
+-            }
+-#endif //MTK_HARDWARE
+-//
+             break;
+         }
+ 
+@@ -5061,8 +4123,8 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 
+                 releaseBuffer = false;
+                 info->mMediaBuffer = srcBuffer;
+-#endif
+         } else {
++#endif
+ 
+         if (mFlags & kStoreMetaDataInVideoBuffers) {
+                 releaseBuffer = false;
+@@ -5118,26 +4180,10 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+                         + srcBuffer->range_offset(),
+                     srcBuffer->range_length());
+ #endif // USE_SAMSUNG_COLORFORMAT
+-#ifdef MTK_HARDWARE
+-            if ((mPropFlags & OMXCODEC_ENABLE_VIDEO_INPUT_ERROR_PATTERNS) && mIsVideoDecoder) {
+-                PutErrorPatterns((uint8_t *)info->mData + offset, srcBuffer->range_length());
+-        }
+-
+-            //ALOGD ("@@ memcpy info->mData(0x%08X), offset(%d), range_offset(%d), range_length(%d)", info->mData, offset, srcBuffer->range_offset(), srcBuffer->range_length());
+-#endif //MTK_HARDWARE
+         }
+-#ifdef MTK_HARDWARE
+         }
+ 
+-#endif //MTK_HARDWARE
+         int64_t lastBufferTimeUs;
+-#ifdef MTK_HARDWARE
+-        // MTK decoders sporadically don't set the time in some buffers
+-        if (!(srcBuffer->meta_data()->findInt64(kKeyTime, &lastBufferTimeUs))) {
+-            lastBufferTimeUs = 0;
+-            srcBuffer->meta_data()->setInt64(kKeyTime, lastBufferTimeUs);
+-        }
+-#endif
+         CHECK(srcBuffer->meta_data()->findInt64(kKeyTime, &lastBufferTimeUs));
+         CHECK(lastBufferTimeUs >= 0);
+ 
+@@ -5213,6 +4259,10 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+ 
+     OMX_U32 flags = OMX_BUFFERFLAG_ENDOFFRAME;
+ 
++    if(interlaceFormatDetected) {
++	interlaceFrameCount++;
++    }
++
+ #ifdef MTK_HARDWARE
+     if (isPartialFrame)
+         flags = 0;
+@@ -5237,10 +4287,6 @@ bool OMXCodec::drainInputBuffer(BufferInfo *info) {
+         mNoMoreOutputData = false;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-    if (reComputePTS)
+-        flags |= OMX_BUFFERFLAG_INVALID_TIMESTAMP;
+-#endif //MTK_HARDWARE
+     if (info == NULL) {
+         CHECK(mFlags & kUseSecureInputBuffers);
+         CHECK(signalEOS);
+@@ -5342,33 +4388,7 @@ status_t OMXCodec::waitForBufferFilled_l() {
+         // for video encoding.
+         return mBufferFilled.wait(mLock);
+     }
+-#ifdef MTK_HARDWARE
+-
+-    //if (!strncmp("OMX.MTK.VIDEO.DECODER", mComponentName, 21))
+-	{
+-        CODEC_LOGE("+waitForBufferFilled_l: %d/%d",
+-            countBuffersWeOwn(mPortBuffers[kPortIndexInput]),
+-            countBuffersWeOwn(mPortBuffers[kPortIndexOutput]));//for EOS may hang
+-    }
+-
+-    status_t err;
+-    if (mRTSPOutputTimeoutUS != -1) {
+-	CODEC_LOGI("output buf time out %lld us for rtsp.", mRTSPOutputTimeoutUS);
+-	err = mBufferFilled.waitRelative(mLock, mRTSPOutputTimeoutUS);
+-    }
+-    else if (mHTTPOutputTimeoutUS != -1) {
+-	CODEC_LOGI("output buf time out %lld us for http.", mHTTPOutputTimeoutUS);
+-	err = mBufferFilled.waitRelative(mLock, mHTTPOutputTimeoutUS);
+-    }
+-    else if (!strncmp(mComponentName, "OMX.MTK.VIDEO.DECODER", 21)) {
+-	err = mBufferFilled.waitRelative(mLock, VDeckBufferFilledEventTimeOutNs);
+-    }
+-    else {
+-	err = mBufferFilled.waitRelative(mLock, kBufferFilledEventTimeOutNs);
+-    }
+-#else //MTK_HARDWARE
+     status_t err = mBufferFilled.waitRelative(mLock, kBufferFilledEventTimeOutNs);
+-#endif
+     if ((err == -ETIMEDOUT) && (mPaused == true)){
+         // When the audio playback is paused, the fill buffer maybe timed out
+         // if input data is not available to decode. Hence, considering the
+@@ -5380,12 +4400,6 @@ status_t OMXCodec::waitForBufferFilled_l() {
+             countBuffersWeOwn(mPortBuffers[kPortIndexInput]),
+             countBuffersWeOwn(mPortBuffers[kPortIndexOutput]));
+     }
+-#ifdef MTK_HARDWARE
+-   // if (!strncmp("OMX.MTK.VIDEO.DECODER", mComponentName, 21))
+-   {
+-        CODEC_LOGE("-waitForBufferFilled_l");//for EOS may hang
+-    }
+-#endif //MTK_HARDWARE
+     return err;
+ }
+ 
+@@ -5775,60 +4789,6 @@ status_t OMXCodec::start(MetaData *meta) {
+             startTimeUs = timeUs;
+         }
+         params->setInt64(kKeyTime, startTimeUs);
+-#ifdef MTK_HARDWARE
+-	int32_t isHttpStreaming = 0;
+-	if (meta->findInt32(kKeyIsHTTPStreaming, &isHttpStreaming) && isHttpStreaming) {
+-	    mIsHttpStreaming = true;
+-	    ALOGD ("@@ mIsHttpStreaming (%d)", mIsHttpStreaming);
+-	}
+-
+-        int32_t mode;
+-        if (meta->findInt32(kKeyRTSPSeekMode, &mode) && mode != 0) {
+-            status_t err2 = OK;
+-            OMX_INDEXTYPE index = OMX_IndexMax;
+-            status_t err = mOMX->getExtensionIndex(mNode, "OMX.MTK.index.param.video.StreamingMode", &index);
+-            if (err == OK) {
+-                OMX_BOOL m = OMX_TRUE;
+-                err2 = mOMX->setParameter(mNode, index, &m, sizeof(m));
+-            }
+-            ALOGI("set StreamingMode, index = %x, err = %x, err2 = %x", index, err, err2);
+-        }
+-	// mtk80902: ALPS00390150
+-	int64_t to;
+-	if (meta->findInt64(kKeyRTSPOutputTimeoutUS, &to) && to != 0) {
+-	    ALOGI("set output buffer timeout %lld for rtsp.", to);
+-	    mRTSPOutputTimeoutUS = to;
+-	}
+-	if (meta->findInt64(kKeyHTTPOutputTimeoutUS, &to) && to != 0) {
+-	    ALOGI("set output buffer timeout %lld for http.", to);
+-	    mHTTPOutputTimeoutUS = to;
+-	}
+-        int32_t number = -1;
+-        if (meta->findInt32(kKeyMaxQueueBuffer, &number) && number > 0) {
+-            mMaxQueueBufferNum = number;
+-        }
+-        if (meta->findInt32(kKeyInputBufferNum, &number) && number > 0) {
+-            OMX_PARAM_PORTDEFINITIONTYPE def;
+-            InitOMXParams(&def);
+-            def.nPortIndex = kPortIndexInput;
+-
+-            status_t err = mOMX->getParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-            CHECK_EQ((int)err, (int)OK);
+-
+-            def.nBufferCountActual = number > (int32_t)def.nBufferCountMin
+-                ? number : def.nBufferCountMin;
+-
+-            err = mOMX->setParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-            CHECK_EQ((int)err, (int)OK);
+-
+-            err = mOMX->getParameter(
+-                    mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
+-            CHECK_EQ((int)err, (int)OK);
+-
+-        }
+-#endif // #ifdef MTK_HARDWARE
+     }
+ 
+     mCodecSpecificDataIndex = 0;
+@@ -6007,10 +4967,6 @@ status_t OMXCodec::stopOmxComponent_l() {
+                 mPortStatus[kPortIndexInput] = SHUTTING_DOWN;
+                 mPortStatus[kPortIndexOutput] = SHUTTING_DOWN;
+ 
+-#ifdef MTK_HARDWARE
+-                if (mQueueWaiting)
+-                    mBufferSent.signal();
+-#endif // #ifdef MTK_HARDWARE
+                 status_t err =
+                     mOMX->sendCommand(mNode, OMX_CommandStateSet, OMX_StateIdle);
+                 CHECK_EQ(err, (status_t)OK);
+@@ -6104,47 +5060,7 @@ status_t OMXCodec::vEncSetBitRate(unsigned int u4BitRate) {
+     return OK;
+ }
+ // ]
+-
+-status_t OMXCodec::vDecSwitchBwTVout(bool enable) {   // true: w/ tvout,  false: w/o tvout
+-    if (mIsVideoDecoder) {
+-        if (!strncmp(mComponentName, "OMX.MTK.", 8)) {
+-            OMX_INDEXTYPE index;
+-            status_t err =
+-            mOMX->getExtensionIndex(
+-                    mNode,
+-                    "OMX.MTK.index.param.video.SwitchBwTVout",
+-                    &index);
+-
+-            if (err != OK) {
+-                return err;
+-            }
+-
+-            OMX_BOOL enable = (OMX_BOOL)enable;
+-            err = mOMX->setConfig(mNode, index, &enable, sizeof(enable));
+-
+-            if (err != OK) {
+-                CODEC_LOGE("setConfig('OMX.MTK.index.param.video.SwitchBwTVout') returned error 0x%08x", err);
+-                return err;
+-            }
+-        }
+-    }
+-    return OK;
+-}
+ #endif //MTK_HARDWARE
+-
+-size_t OMXCodec::buffersOwn() {
+-    const Vector<BufferInfo> &buffers = mPortBuffers[kPortIndexOutput];
+-    size_t n = 0;
+-    for (size_t i = 0; i < buffers.size(); ++i) {
+-        if (buffers[i].mStatus == OWNED_BY_US) {
+-            ++n;
+-        }
+-    }
+-
+-    return n;
+-}
+-
+-
+ #endif
+ 
+ status_t OMXCodec::read(
+@@ -6164,10 +5080,6 @@ status_t OMXCodec::read(
+     }
+ 
+     if (mState != EXECUTING && mState != RECONFIGURING) {
+-#ifdef MTK_HARDWARE
+-        if (mState == ERROR && ((mFinalStatus == ERROR_UNSUPPORTED_VIDEO) || (mFinalStatus == ERROR_UNSUPPORTED_AUDIO) || (mFinalStatus == ERROR_BUFFER_DEQUEUE_FAIL)))
+-            return mFinalStatus;
+-#endif
+         return UNKNOWN_ERROR;
+     }
+ 
+@@ -6176,10 +5088,6 @@ status_t OMXCodec::read(
+     ReadOptions::SeekMode seekMode;
+     if (options && options->getSeekTo(&seekTimeUs, &seekMode)) {
+         seeking = true;
+-#ifdef MTK_HARDWARE
+-		mPreRollStartTime = systemTime() / 1000;
+-		CODEC_LOGI("mPreRollStartTime = %lld", mPreRollStartTime);
+-#endif //MTK_HARDWARE
+     }
+ 
+     if (mInitialBufferSubmit) {
+@@ -6212,7 +5120,7 @@ status_t OMXCodec::read(
+                     continue;
+                 }
+ 
+-                if (!drainInputBuffer(info, true)) {
++                if (!drainInputBuffer(info)) {
+                     break;
+                 }
+ 
+@@ -6232,14 +5140,7 @@ status_t OMXCodec::read(
+             // after the output port is reenabled.
+             fillOutputBuffers();
+         }
+-
+         drainInputBuffers();
+-        if (seeking) {
+-#ifdef MTK_HARDWARE
+-            OMX_TICKS seekTime = seekTimeUs;
+-            mOMX->setConfig(mNode, OMX_IndexVendorMtkOmxVdecSeekMode, (void *)&seekTime, sizeof(void *));
+-#endif //MTK_HARDWARE
+-        }
+     }
+ 
+     if (seeking) {
+@@ -6250,10 +5151,6 @@ status_t OMXCodec::read(
+         }
+ 
+         if (mState != EXECUTING) {
+-#ifdef MTK_HARDWARE
+-            if (mState == ERROR && ((mFinalStatus == ERROR_UNSUPPORTED_VIDEO) || (mFinalStatus == ERROR_UNSUPPORTED_AUDIO)))
+-                return mFinalStatus;
+-#endif //MTK_HARDWARE
+             return UNKNOWN_ERROR;
+         }
+ 
+@@ -6265,17 +5162,6 @@ status_t OMXCodec::read(
+         mSeekTimeUs = seekTimeUs;
+         mSeekMode = seekMode;
+ 
+-#ifdef MTK_HARDWARE
+-        //Bruce Hsu resend SPS and PPS for AVC after seek
+-        if (!strcasecmp(MEDIA_MIMETYPE_VIDEO_AVC, mMIME))
+-        {
+-            mCodecSpecificDataIndex = 0;
+-            if(mCodecSpecificData.size() != 2)
+-            {
+-                ALOGE("Resend unexpected data, %d!!", mCodecSpecificData.size());
+-            }
+-        }
+-#endif //MTK_HARDWARE
+         mFilledBuffers.clear();
+ 
+         CHECK_EQ((int)mState, (int)EXECUTING);
+@@ -6307,10 +5193,6 @@ status_t OMXCodec::read(
+                 if (emulateOutputFlushCompletion) {
+                     onCmdComplete(OMX_CommandFlush, kPortIndexOutput);
+                 }
+-#ifdef MTK_HARDWARE
+-        OMX_TICKS seekTime = seekTimeUs;
+-        mOMX->setConfig(mNode, OMX_IndexVendorMtkOmxVdecSeekMode, (void *)&seekTime, sizeof(void *));
+-#endif //MTK_HARDWARE
+             }
+         }
+ 
+@@ -6318,19 +5200,6 @@ status_t OMXCodec::read(
+             if ((err = waitForBufferFilled_l()) != OK) {
+                 return err;
+             }
+-#ifdef MTK_HARDWARE
+-            size_t index = *mFilledBuffers.begin();
+-            if (!mFilledBuffers.empty() && mPortBuffers[kPortIndexOutput].size() > 0 && index < mPortBuffers[kPortIndexOutput].size()) {
+-                BufferInfo *info = &mPortBuffers[kPortIndexOutput].editItemAt(index);
+-                MediaBuffer *buffer = info->mMediaBuffer;
+-                if (buffer && buffer->range_length() == 0 && info->mStatus == OWNED_BY_US) { // invalid buffer and return
+-                    mFilledBuffers.erase(mFilledBuffers.begin());
+-                    CODEC_LOGV("output buffer length 0 return to omx directly");
+-                    fillOutputBuffer(info);
+-        }
+-    }
+-
+-#endif //MTK_HARDWARE
+         }
+     }
+ 
+@@ -6347,21 +5216,9 @@ status_t OMXCodec::read(
+     }
+ 
+     if (mState == ERROR) {
+-#ifdef MTK_HARDWARE
+-        if ((mFinalStatus == ERROR_UNSUPPORTED_VIDEO) || (mFinalStatus == ERROR_UNSUPPORTED_AUDIO))
+-            return mFinalStatus;
+-#endif //MTK_HARDWARE
+         return UNKNOWN_ERROR;
+     }
+ 
+-#ifdef MTK_HARDWARE
+-	if (mOutputPortSettingsHaveChanged) {
+-		mOutputPortSettingsHaveChanged = false;
+-		ALOGD("INFO_FORMAT_CHANGED");
+-		return INFO_FORMAT_CHANGED;
+-	}
+-#endif //MTK_HARDWARE
+-
+     if (seeking) {
+         CHECK_EQ((int)mState, (int)FLUSHING);
+         setState(EXECUTING);
+@@ -6378,20 +5235,12 @@ status_t OMXCodec::read(
+     }
+ 
+     size_t index = *mFilledBuffers.begin();
+-#ifdef MTK_HARDWARE
+-	Vector<BufferInfo> *buftest = &mPortBuffers[kPortIndexOutput];
+-	CHECK(index < buftest->size());
+-#endif //MTK_HARDWARE
+     mFilledBuffers.erase(mFilledBuffers.begin());
+     if (!strncasecmp(mMIME, "video/", 6)) {
+         ATRACE_INT("Output buffers with OMXCodec", mFilledBuffers.size());
+         ATRACE_INT("Output Buffers with OMX client",
+                 countBuffersWeOwn(mPortBuffers[kPortIndexOutput]));
+     }
+-#ifdef MTK_HARDWARE
+-    if (mQueueWaiting)
+-        mBufferSent.signal();
+-#endif //MTK_HARDWARE
+ 
+     BufferInfo *info = &mPortBuffers[kPortIndexOutput].editItemAt(index);
+     CHECK_EQ((int)info->mStatus, (int)OWNED_BY_US);
+@@ -6404,18 +5253,9 @@ status_t OMXCodec::read(
+     *buffer = info->mMediaBuffer;
+ 
+ #ifndef MTK_HARDWARE
+-    if ((mFlags & kUseMaxOutputBuffers) && (mNativeWindow != NULL) && mIsVideo) {
+-        int32_t left, top, right, bottom;
+-        CHECK(mOutputFormat->findRect(kKeyCropRect, &left, &top, &right, &bottom));
+-        OMX_BUFFERHEADERTYPE *pBufferHeader = static_cast<OMX_BUFFERHEADERTYPE *>(info->mBuffer);
+-        if (((pBufferHeader->nWidth != right - left) || (pBufferHeader->nHeight != bottom - top)) && pBufferHeader->nFilledLen > 0) {
+-            android_native_rect_t crop;
+-            crop.left = left;
+-            crop.top = top;
+-            crop.right = left + pBufferHeader->nWidth + 1;
+-            crop.bottom = top + pBufferHeader->nHeight + 1;
+-            native_window_set_crop(mNativeWindow.get(), &crop);
+-        }
++    if (info->mOutputCropChanged) {
++        initNativeWindowCrop();
++        info->mOutputCropChanged = false;
+     }
+ #endif
+ #ifdef DOLBY_UDC
+@@ -6437,24 +5277,11 @@ void OMXCodec::signalBufferReturned(MediaBuffer *buffer) {
+         BufferInfo *info = &buffers->editItemAt(i);
+ 
+         if (info->mMediaBuffer == buffer) {
+-#ifdef MTK_HARDWARE
+-            if (mState != RECONFIGURING) {
+-            CHECK_EQ((int)mPortStatus[kPortIndexOutput], (int)ENABLED);
+-            }
+-#else //MTK_HARDWARE
+             CHECK_EQ((int)mPortStatus[kPortIndexOutput], (int)ENABLED);
+-#endif //MTK_HARDWARE
+             CHECK_EQ((int)info->mStatus, (int)OWNED_BY_CLIENT);
+ 
+             info->mStatus = OWNED_BY_US;
+ 
+-#ifdef MTK_HARDWARE
+-            if (mState == RECONFIGURING) {
+-                CODEC_LOGE("freeBuffer from signalBufferReturned");
+-                freeBuffer(kPortIndexOutput, i);
+-            }
+-            else {
+-#endif //MTK_HARDWARE
+             if (buffer->graphicBuffer() == 0) {
+                 fillOutputBuffer(info);
+             } else {
+@@ -6481,9 +5308,6 @@ void OMXCodec::signalBufferReturned(MediaBuffer *buffer) {
+                 // Give the buffer to the OMX node to fill.
+                 fillOutputBuffer(nextBufInfo);
+             }
+-#ifdef MTK_HARDWARE
+-            }
+-#endif //MTK_HARDWARE
+             return;
+         }
+     }
+@@ -6749,11 +5573,6 @@ void OMXCodec::initOutputFormat(const sp<MetaData> &inputFormat) {
+                 inputFormat->findInt32(kKeyChannelCount, &numChannels);
+                 inputFormat->findInt32(kKeySampleRate, &sampleRate);
+                 inputFormat->findInt32(kKeyBitRate, &bitRate);
+-#ifdef MTK_HARDWARE
+-                int32_t aacProfile = OMX_AUDIO_AACObjectLC;
+-                inputFormat->findInt32(kKeyAACProfile, &aacProfile);
+-                mOutputFormat->setInt32(kKeyAACProfile, aacProfile);
+-#endif //MTK_HARDWARE
+                 mOutputFormat->setInt32(kKeyChannelCount, numChannels);
+                 mOutputFormat->setInt32(kKeySampleRate, sampleRate);
+                 mOutputFormat->setInt32(kKeyBitRate, bitRate);
+@@ -6812,11 +5631,6 @@ void OMXCodec::initOutputFormat(const sp<MetaData> &inputFormat) {
+             } else if (video_def->eCompressionFormat == OMX_VIDEO_CodingAVC) {
+                 mOutputFormat->setCString(
+                         kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_AVC);
+-#ifdef MTK_HARDWARE
+-            } else if (video_def->eCompressionFormat == OMX_VIDEO_CodingVP8) {
+-                mOutputFormat->setCString(
+-                        kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_VP8);
+-#endif //MTK_HARDWARE
+             } else {
+                 AString mimeType;
+                 err = BAD_VALUE;
+@@ -6834,15 +5648,16 @@ void OMXCodec::initOutputFormat(const sp<MetaData> &inputFormat) {
+                     CHECK(!"Unknown compression format.");
+                 }
+             }
+-
++#ifdef MTK_HARDWARE
++if (video_def->nFrameHeight == 1072) {
++   video_def->nFrameHeight = 1080;
++}
++#endif   
+             mOutputFormat->setInt32(kKeyWidth, video_def->nFrameWidth);
+             mOutputFormat->setInt32(kKeyHeight, video_def->nFrameHeight);
+-#ifdef MTK_HARDWARE
+-// Decompiled JB libstagefright.so don't have this 2: we must investigate why
++            mOutputFormat->setInt32(kKeyColorFormat, video_def->eColorFormat);
+             mOutputFormat->setInt32(kKeyStride, video_def->nStride);
+             mOutputFormat->setInt32(kKeySliceHeight, video_def->nSliceHeight);
+-#endif
+-            mOutputFormat->setInt32(kKeyColorFormat, video_def->eColorFormat);
+ 
+             if (!mIsEncoder) {
+                 OMX_CONFIG_RECTTYPE rect;
+@@ -6979,15 +5794,6 @@ status_t OMXCodec::resumeLocked(bool drainInputBuf) {
+         return OK;
+     }
+ }
+-#ifdef MTK_HARDWARE
+-void OMXCodec::resume() {
+-    Mutex::Autolock autoLock(mLock);
+-
+-    CODEC_LOGE("RESUME--------------------");
+-    mPaused = false;
+-
+-}
+-#endif //MTK_HARDWARE
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+ #ifdef MTK_HARDWARE
+-- 
+2.15.1
+

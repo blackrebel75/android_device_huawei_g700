@@ -1,0 +1,74 @@
+From a6e7012f8f9c2f30d67657cffcf2916fe3921e1d Mon Sep 17 00:00:00 2001
+From: xplodwild <xplod@ouverta.fr>
+Date: Wed, 13 Nov 2013 00:04:51 +0100
+Subject: [PATCH 02/27] libutils: Forward-port an old callstack method
+
+Change-Id: I77a0dbc6214e662c2217f25cdf3f3883cd959bb3
+---
+ include/utils/CallStack.h |  7 +++++++
+ libutils/Android.mk       |  4 ++++
+ libutils/CallStack.cpp    | 15 +++++++++++++++
+ 3 files changed, 26 insertions(+)
+
+diff --git a/include/utils/CallStack.h b/include/utils/CallStack.h
+index 27e89f46..3e75b728 100644
+--- a/include/utils/CallStack.h
++++ b/include/utils/CallStack.h
+@@ -50,6 +50,13 @@ public:
+     void log(const char* logtag,
+              android_LogPriority priority = ANDROID_LOG_DEBUG,
+              const char* prefix = 0) const;
++#ifdef MTK_MT6589
++    // Dump a stack trace to the log
++    void dump(const char* prefix = 0) const;
++#endif
++
++    // Dump a stack trace to the log using the supplied logtag
++    void dump(const char* logtag, const char* prefix = 0) const;
+ 
+     // Dump a stack trace to the specified file descriptor.
+     void dump(int fd, int indent = 0, const char* prefix = 0) const;
+diff --git a/libutils/Android.mk b/libutils/Android.mk
+index 035846bb..d08f0545 100644
+--- a/libutils/Android.mk
++++ b/libutils/Android.mk
+@@ -91,6 +91,10 @@ LOCAL_CFLAGS += -DALIGN_DOUBLE
+ endif
+ LOCAL_CFLAGS += -Werror
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++LOCAL_CFLAGS += -DMTK_MT6589
++endif
++
+ LOCAL_C_INCLUDES += \
+ 		bionic/libc \
+ 		external/zlib
+diff --git a/libutils/CallStack.cpp b/libutils/CallStack.cpp
+index 0bfb520e..c0107e3f 100644
+--- a/libutils/CallStack.cpp
++++ b/libutils/CallStack.cpp
+@@ -54,6 +54,21 @@ void CallStack::log(const char* logtag, android_LogPriority priority, const char
+     print(printer);
+ }
+ 
++#ifdef MTK_MT6589
++void CallStack::dump(const char* prefix) const {
++    backtrace_symbol_t symbols[mCount];
++
++    get_backtrace_symbols(mStack, mCount, symbols);
++    for (size_t i = 0; i < mCount; i++) {
++        char line[MAX_BACKTRACE_LINE_LENGTH];
++        format_backtrace_line(i, &mStack[i], &symbols[i],
++                line, MAX_BACKTRACE_LINE_LENGTH);
++        ALOGD("%s%s", prefix, line);
++    }
++    free_backtrace_symbols(symbols, mCount);
++}
++#endif
++
+ void CallStack::dump(int fd, int indent, const char* prefix) const {
+     FdPrinter printer(fd, indent, prefix);
+     print(printer);
+-- 
+2.15.1
+

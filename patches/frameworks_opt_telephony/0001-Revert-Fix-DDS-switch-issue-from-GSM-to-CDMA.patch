@@ -1,0 +1,76 @@
+From d06ed7315abf3e10e678817bee8d8a5fd3912810 Mon Sep 17 00:00:00 2001
+From: blackrebel75 <72fabio1@virgilio.it>
+Date: Sun, 24 Jun 2018 20:58:37 +0200
+Subject: [PATCH] Revert: Fix DDS switch issue from GSM to CDMA.
+
+---
+ .../com/android/internal/telephony/SubscriptionController.java | 10 +++++++---
+ .../telephony/dataconnection/DcSwitchStateMachine.java         | 10 ++++------
+ 2 files changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/src/java/com/android/internal/telephony/SubscriptionController.java b/src/java/com/android/internal/telephony/SubscriptionController.java
+index 4d252de5..3f6067bc 100755
+--- a/src/java/com/android/internal/telephony/SubscriptionController.java
++++ b/src/java/com/android/internal/telephony/SubscriptionController.java
+@@ -1427,9 +1427,7 @@ public class SubscriptionController extends ISub.Stub {
+             reqStatus = PhoneConstants.SUCCESS;
+         }
+         mScheduler.updateCurrentDds(null);
+-        broadcastDefaultDataSubIdChanged(subId);
+-
+-        updateAllDataConnectionTrackers();
++        broadcastDefaultDataSubIdChanged(reqStatus);
+     }
+ 
+     public void setDefaultDataSubId(int subId) {
+@@ -1445,6 +1443,12 @@ public class SubscriptionController extends ISub.Stub {
+         }
+         mDctController.setDefaultDataSubId(subId);
+ 
++        Settings.Global.putInt(mContext.getContentResolver(),
++                Settings.Global.MULTI_SIM_DATA_CALL_SUBSCRIPTION, subId);
++        broadcastDefaultDataSubIdChanged(subId);
++
++        // FIXME is this still needed?
++        updateAllDataConnectionTrackers();
+     }
+ 
+     private void setDefaultDataSubNetworkType(int subId) {
+diff --git a/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java b/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
+index 1ed407e5..a86adb41 100644
+--- a/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
++++ b/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
+@@ -31,7 +31,6 @@ import com.android.internal.telephony.SubscriptionController;
+ import android.os.Message;
+ import android.os.SystemProperties;
+ import android.telephony.Rlog;
+-import android.telephony.ServiceState;
+ 
+ public class DcSwitchStateMachine extends StateMachine {
+     private static final boolean DBG = true;
+@@ -152,11 +151,6 @@ public class DcSwitchStateMachine extends StateMachine {
+         @Override
+         public void enter() {
+             log("AttachingState: enter");
+-            if (mPhone.getServiceState() != null &&
+-                    mPhone.getServiceState().getDataRegState() == ServiceState.STATE_IN_SERVICE) {
+-                log("AttachingState: Data already registered. Move to Attached");
+-                transitionTo(mAttachedState);
+-            }
+             final PhoneBase pb = (PhoneBase)((PhoneProxy)mPhone).getActivePhone();
+             // if we're on a carrier that unattaches us if we're idle for too long
+             // (on wifi) and they won't re-attach until we poke them.  Poke them!
+@@ -183,6 +177,10 @@ public class DcSwitchStateMachine extends StateMachine {
+                         if (DBG) log("AttachingState executeAll due to autoAttach");
+                         DctController.getInstance().executeRequest(apnRequest);
+                     }
++
++                    PhoneBase pb = (PhoneBase) ((PhoneProxy) mPhone).getActivePhone();
++                    pb.mCi.setDataAllowed(true, null);
++
+                     mAc.replyToMessage(msg, DcSwitchAsyncChannel.RSP_CONNECT,
+                             PhoneConstants.APN_REQUEST_STARTED);
+                     retVal = HANDLED;
+-- 
+2.15.1
+

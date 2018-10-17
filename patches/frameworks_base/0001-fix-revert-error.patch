@@ -1,0 +1,44 @@
+From f8aca245ccde40c7d663286e1a533024c28139d1 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 23:20:48 +0200
+Subject: [PATCH 1/8] fix revert error
+
+Former-commit-id: c6bfe05d7404f6842c5275035026b10e42435cb3
+---
+ core/jni/android_opengl_GLES31.cpp    | 4 ++--
+ core/jni/android_opengl_GLES31Ext.cpp | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/core/jni/android_opengl_GLES31.cpp b/core/jni/android_opengl_GLES31.cpp
+index bc9fc5d6b43..c634b917fbe 100644
+--- a/core/jni/android_opengl_GLES31.cpp
++++ b/core/jni/android_opengl_GLES31.cpp
+@@ -18,8 +18,8 @@
+ 
+ #include <stdint.h>
+ #include <GLES3/gl31.h>
+-#include <jni.h>
+-#include <JNIHelp.h>
++#include "jni.h"
++#include "JNIHelp.h"
+ #include <android_runtime/AndroidRuntime.h>
+ #include <utils/misc.h>
+ #include <assert.h>
+diff --git a/core/jni/android_opengl_GLES31Ext.cpp b/core/jni/android_opengl_GLES31Ext.cpp
+index d76c166489c..270b50e0347 100644
+--- a/core/jni/android_opengl_GLES31Ext.cpp
++++ b/core/jni/android_opengl_GLES31Ext.cpp
+@@ -19,8 +19,8 @@
+ #include <GLES3/gl31.h>
+ #include <GLES2/gl2ext.h>
+ 
+-#include <jni.h>
+-#include <JNIHelp.h>
++#include "jni.h"
++#include "JNIHelp.h"
+ #include <android_runtime/AndroidRuntime.h>
+ #include <utils/misc.h>
+ #include <assert.h>
+-- 
+2.15.1
+

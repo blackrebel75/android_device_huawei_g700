@@ -1,0 +1,43 @@
+From a5ca857b563a1aa2877d385c9e16434cd39d370c Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Fri, 15 Jun 2018 18:17:17 +0200
+Subject: [PATCH 15/18] [MTK] Fix some video playback
+
+---
+ media/libstagefright/omx/OMXNodeInstance.cpp | 18 +-----------------
+ 1 file changed, 1 insertion(+), 17 deletions(-)
+
+diff --git a/media/libstagefright/omx/OMXNodeInstance.cpp b/media/libstagefright/omx/OMXNodeInstance.cpp
+index f3f7a5097..1faf0ff79 100644
+--- a/media/libstagefright/omx/OMXNodeInstance.cpp
++++ b/media/libstagefright/omx/OMXNodeInstance.cpp
+@@ -798,25 +798,9 @@ status_t OMXNodeInstance::useBuffer(
+ 
+     OMX_BUFFERHEADERTYPE *header;
+ 
+-#ifdef MTK_HARDWARE
+-  #ifdef ENABLE_MTK_BUF_ADDR_ALIGNMENT
+-    OMX_U8 *ptr = static_cast<OMX_U8 *>(params->pointer());
+-    OMX_U32 pBuffer = ((reinterpret_cast<OMX_U32>(ptr)+(MTK_BUF_ADDR_ALIGNMENT_VALUE-1))&~(MTK_BUF_ADDR_ALIGNMENT_VALUE-1));
+-  #else
+-    OMX_U8 *ptr = static_cast<OMX_U8 *>(params->pointer());
+-    OMX_U32 pBuffer = ((reinterpret_cast<OMX_U32>(ptr));
+-  #endif
+-#else
+-    // do nothing
+-#endif
+     OMX_ERRORTYPE err = OMX_UseBuffer(
+             mHandle, &header, portIndex, buffer_meta,
+-#ifdef MTK_HARDWARE
+-            params->size(), (OMX_U8 *)pBuffer
+-#else
+-            params->size(), data)
+-#endif
+-            );
++            params->size(), data);
+ 
+     if (err != OMX_ErrorNone) {
+         CLOG_ERROR(useBuffer, err, SIMPLE_BUFFER(portIndex, params->size(), params->pointer()));
+-- 
+2.15.1
+

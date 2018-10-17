@@ -1,0 +1,30 @@
+From a18d9cf9788a0090f1bcf5122b703b7967137b28 Mon Sep 17 00:00:00 2001
+From: ferhung-mtk <ferhung27@gmail.com>
+Date: Sun, 17 Apr 2016 23:33:38 +0800
+Subject: [PATCH 15/27] MediaTek: healthd: correctly report battery voltage on
+ MTK kernels.
+
+---
+ healthd/BatteryMonitor.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/healthd/BatteryMonitor.cpp b/healthd/BatteryMonitor.cpp
+index 66c4e8e4..1022490f 100644
+--- a/healthd/BatteryMonitor.cpp
++++ b/healthd/BatteryMonitor.cpp
+@@ -198,8 +198,11 @@ bool BatteryMonitor::update(void) {
+     props.batteryLevel = mBatteryFixedCapacity ?
+         mBatteryFixedCapacity :
+         getIntField(mHealthdConfig->batteryCapacityPath);
++#ifndef MTK_HARDWARE
+     props.batteryVoltage = getIntField(mHealthdConfig->batteryVoltagePath) / 1000;
+-
++#else
++    props.batteryVoltage = getIntField(mHealthdConfig->batteryVoltagePath);
++#endif
+     props.batteryTemperature = mBatteryFixedTemperature ?
+         mBatteryFixedTemperature :
+         getIntField(mHealthdConfig->batteryTemperaturePath);
+-- 
+2.15.1
+

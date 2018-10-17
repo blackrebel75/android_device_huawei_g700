@@ -1,0 +1,24 @@
+From 71839276dbdef183faf93c2cdc3ad8ded43c20db Mon Sep 17 00:00:00 2001
+From: blackrebel75 <72fabio1@virgilio.it>
+Date: Sat, 28 Jul 2018 16:08:49 +0200
+Subject: [PATCH 3/3] Fix compilation
+
+---
+ .../android/internal/telephony/dataconnection/DcSwitchStateMachine.java  | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java b/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
+index a86adb41..705559e3 100644
+--- a/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
++++ b/src/java/com/android/internal/telephony/dataconnection/DcSwitchStateMachine.java
+@@ -178,7 +178,6 @@ public class DcSwitchStateMachine extends StateMachine {
+                         DctController.getInstance().executeRequest(apnRequest);
+                     }
+ 
+-                    PhoneBase pb = (PhoneBase) ((PhoneProxy) mPhone).getActivePhone();
+                     pb.mCi.setDataAllowed(true, null);
+ 
+                     mAc.replyToMessage(msg, DcSwitchAsyncChannel.RSP_CONNECT,
+-- 
+2.15.1
+

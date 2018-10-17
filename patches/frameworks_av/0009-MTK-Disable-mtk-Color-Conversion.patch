@@ -1,0 +1,34 @@
+From 418a42457c93ac1f3e28e14bcb316a31c827a0fa Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 10:45:07 +0200
+Subject: [PATCH 09/18] [MTK] Disable mtk Color Conversion
+
+---
+ media/libstagefright/colorconversion/ColorConverter.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/media/libstagefright/colorconversion/ColorConverter.cpp b/media/libstagefright/colorconversion/ColorConverter.cpp
+index 582db959d..d8cd035b0 100644
+--- a/media/libstagefright/colorconversion/ColorConverter.cpp
++++ b/media/libstagefright/colorconversion/ColorConverter.cpp
+@@ -104,7 +104,7 @@ status_t ColorConverter::convert(
+         size_t dstWidth, size_t dstHeight,
+         size_t dstCropLeft, size_t dstCropTop,
+         size_t dstCropRight, size_t dstCropBottom) {
+-#ifdef MTK_HARDWARE
++#ifndef MTK_HARDWARE
+     if ((mDstFormat != OMX_COLOR_Format16bitRGB565) && (mDstFormat != OMX_COLOR_Format32bitARGB8888)) {
+ 		return ERROR_UNSUPPORTED;
+     }
+@@ -128,7 +128,7 @@ status_t ColorConverter::convert(
+ 
+     switch (mSrcFormat) {
+         case OMX_COLOR_FormatYUV420Planar:
+-#ifdef MTK_HARDWARE
++#ifndef MTK_HARDWARE
+             err = convertYUVToRGBHW(src, dst);
+ #else
+             err = convertYUV420Planar(src, dst);
+-- 
+2.15.1
+

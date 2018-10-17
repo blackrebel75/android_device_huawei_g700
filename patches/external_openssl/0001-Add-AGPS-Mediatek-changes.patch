@@ -1,0 +1,97 @@
+From 92bed4bb1ed5c33f1e7d61c0d4a726c0eeecc33f Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 21:20:12 +0200
+Subject: [PATCH] Add AGPS Mediatek changes
+
+---
+ crypto/x509/x509_d2.c | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ include/openssl/ssl.h |  8 ++++++++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/crypto/x509/x509_d2.c b/crypto/x509/x509_d2.c
+index 51410cf..d69dccb 100644
+--- a/crypto/x509/x509_d2.c
++++ b/crypto/x509/x509_d2.c
+@@ -104,4 +104,53 @@ int X509_STORE_load_locations(X509_STORE *ctx, const char *file,
+ 	return(1);
+ 	}
+ 
++#ifdef MTK_HARDWARE
++// MTK AGPS Support
++int X509_STORE_set_default_paths_ext(X509_STORE *ctx, int filetype)
++	{
++	X509_LOOKUP *lookup;
++
++    if (filetype != X509_FILETYPE_ASN1)
++        return X509_STORE_set_default_paths(ctx);
++       
++	lookup=X509_STORE_add_lookup(ctx,X509_LOOKUP_file());
++	if (lookup == NULL) return(0);
++	X509_LOOKUP_load_file(lookup,NULL,X509_FILETYPE_ASN1);
++
++	lookup=X509_STORE_add_lookup(ctx,X509_LOOKUP_hash_dir());
++	if (lookup == NULL) return(0);
++	X509_LOOKUP_add_dir(lookup,NULL,X509_FILETYPE_ASN1);
++	
++	/* clear any errors */
++	ERR_clear_error();
++	return(1);
++	}
++
++int X509_STORE_load_locations_ext(X509_STORE *ctx, const char *file,
++		const char *path, int filetype)
++	{
++	X509_LOOKUP *lookup;
++
++    if (filetype != X509_FILETYPE_ASN1)
++        return X509_STORE_load_locations(ctx, file, path);
++
++	if (file != NULL)
++		{
++		lookup=X509_STORE_add_lookup(ctx,X509_LOOKUP_file());
++		if (lookup == NULL) return(0);
++		if (X509_LOOKUP_load_file(lookup,file,X509_FILETYPE_ASN1) != 1)
++		    return(0);
++		}
++	if (path != NULL)
++		{
++		lookup=X509_STORE_add_lookup(ctx,X509_LOOKUP_hash_dir());
++		if (lookup == NULL) return(0);
++		if (X509_LOOKUP_add_dir(lookup,path,X509_FILETYPE_ASN1) != 1)
++		    return(0);
++		}
++	if ((path == NULL) && (file == NULL))
++		return(0);
++	return(1);
++	}
++#endif
+ #endif
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index abc7b37..8a19421 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -1054,6 +1054,10 @@ struct ssl_ctx_st
+ 	char tlsext_channel_id_enabled_new;
+ 	/* The client's Channel ID private key. */
+ 	EVP_PKEY *tlsext_channel_id_private;
++#endif
++#ifdef MTK_HARDWARE
++	// MTK: AGPS TLS Usage
++	void *sec_ssl_ctx;
+ #endif
+ 	};
+ 
+@@ -1470,6 +1474,10 @@ struct ssl_st
+ 
+ #ifndef OPENSSL_NO_SRP
+ 	SRP_CTX srp_ctx; /* ctx for SRP authentication */
++#endif
++#ifdef MTK_HARDWARE
++	// MTK: AGPS TLS Usage
++	void *sec_ssl_conn;
+ #endif
+ 	};
+ 
+-- 
+2.15.1
+

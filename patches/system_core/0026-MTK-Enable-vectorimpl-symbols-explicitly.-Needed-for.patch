@@ -1,0 +1,94 @@
+From 3c4e034009a1d047c08bec132e96845c6d7df182 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 21 Jun 2018 18:33:48 +0200
+Subject: [PATCH 26/27] [MTK] Enable vectorimpl symbols explicitly. Needed for
+ jb blobs.
+
+---
+ include/utils/VectorImpl.h | 8 ++++----
+ libutils/VectorImpl.cpp    | 8 ++++----
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/include/utils/VectorImpl.h b/include/utils/VectorImpl.h
+index 88c3a05d..eb0ccbb0 100644
+--- a/include/utils/VectorImpl.h
++++ b/include/utils/VectorImpl.h
+@@ -106,7 +106,7 @@ protected:
+     virtual void            do_move_forward(void* dest, const void* from, size_t num) const = 0;
+     virtual void            do_move_backward(void* dest, const void* from, size_t num) const = 0;
+ 
+-#ifdef NEEDS_VECTORIMPL_SYMBOLS
++//#ifdef NEEDS_VECTORIMPL_SYMBOLS
+     // take care of FBC...
+     virtual void            reservedVectorImpl1();
+     virtual void            reservedVectorImpl2();
+@@ -116,7 +116,7 @@ protected:
+     virtual void            reservedVectorImpl6();
+     virtual void            reservedVectorImpl7();
+     virtual void            reservedVectorImpl8();
+-#endif
++//#endif
+ 
+ private:
+         void* _grow(size_t where, size_t amount);
+@@ -168,7 +168,7 @@ public:
+ protected:
+     virtual int             do_compare(const void* lhs, const void* rhs) const = 0;
+ 
+-#ifdef NEEDS_VECTORIMPL_SYMBOLS
++//#ifdef NEEDS_VECTORIMPL_SYMBOLS
+     // take care of FBC...
+     virtual void            reservedSortedVectorImpl1();
+     virtual void            reservedSortedVectorImpl2();
+@@ -178,7 +178,7 @@ protected:
+     virtual void            reservedSortedVectorImpl6();
+     virtual void            reservedSortedVectorImpl7();
+     virtual void            reservedSortedVectorImpl8();
+-#endif
++//#endif
+ 
+ private:
+             ssize_t         _indexOrderOf(const void* item, size_t* order = 0) const;
+diff --git a/libutils/VectorImpl.cpp b/libutils/VectorImpl.cpp
+index ffd552b2..4defdcc0 100644
+--- a/libutils/VectorImpl.cpp
++++ b/libutils/VectorImpl.cpp
+@@ -552,7 +552,7 @@ void VectorImpl::_do_move_backward(void* dest, const void* from, size_t num) con
+     do_move_backward(dest, from, num);
+ }
+ 
+-#ifdef NEEDS_VECTORIMPL_SYMBOLS
++//#ifdef NEEDS_VECTORIMPL_SYMBOLS
+ void VectorImpl::reservedVectorImpl1() { }
+ void VectorImpl::reservedVectorImpl2() { }
+ void VectorImpl::reservedVectorImpl3() { }
+@@ -561,7 +561,7 @@ void VectorImpl::reservedVectorImpl5() { }
+ void VectorImpl::reservedVectorImpl6() { }
+ void VectorImpl::reservedVectorImpl7() { }
+ void VectorImpl::reservedVectorImpl8() { }
+-#endif
++//#endif
+ 
+ /*****************************************************************************/
+ 
+@@ -678,7 +678,7 @@ ssize_t SortedVectorImpl::remove(const void* item)
+     return i;
+ }
+ 
+-#ifdef NEEDS_VECTORIMPL_SYMBOLS
++//#ifdef NEEDS_VECTORIMPL_SYMBOLS
+ void SortedVectorImpl::reservedSortedVectorImpl1() { };
+ void SortedVectorImpl::reservedSortedVectorImpl2() { };
+ void SortedVectorImpl::reservedSortedVectorImpl3() { };
+@@ -687,7 +687,7 @@ void SortedVectorImpl::reservedSortedVectorImpl5() { };
+ void SortedVectorImpl::reservedSortedVectorImpl6() { };
+ void SortedVectorImpl::reservedSortedVectorImpl7() { };
+ void SortedVectorImpl::reservedSortedVectorImpl8() { };
+-#endif
++//#endif
+ 
+ /*****************************************************************************/
+ 
+-- 
+2.15.1
+

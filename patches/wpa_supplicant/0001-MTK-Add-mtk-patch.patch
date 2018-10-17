@@ -1,0 +1,125 @@
+From d4bbdd7dcd7ca3dac0ac1311dadc3a537e255810 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 19 Jun 2018 19:21:31 +0200
+Subject: [PATCH] [MTK] Add mtk patch
+
+---
+ hostapd/ctrl_iface.c   | 30 ++++++++++++++++++++++++++++++
+ src/ap/drv_callbacks.c | 30 ++++++++++++++++++++++++++++++
+ src/ap/hostapd.c       |  4 ++++
+ 3 files changed, 64 insertions(+)
+
+diff --git a/hostapd/ctrl_iface.c b/hostapd/ctrl_iface.c
+index 591c395..baff396 100644
+--- a/hostapd/ctrl_iface.c
++++ b/hostapd/ctrl_iface.c
+@@ -1349,6 +1349,31 @@ static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
+ 	return ret;
+ }
+ 
++#ifdef MTK_HARDWARE
++static int hostapd_driver_cmd(struct hostapd_data *hapd, char *cmd,
++			      char *buf, size_t buflen)
++{
++	int ret;
++
++	if (hapd->driver == NULL || hapd->driver->driver_cmd == NULL)
++		return -1;
++
++	ret = hapd->driver->driver_cmd(hapd->drv_priv, cmd, buf, buflen);
++	if (ret == 0) {
++		if (os_strncmp(cmd, "STA-BLOCK ", 10) == 0) {
++			u8 bssid[ETH_ALEN];
++			if (hwaddr_aton(cmd + 10, bssid))
++				return -1;
++
++			ap_sta_disconnect(hapd, NULL, bssid, WLAN_REASON_PREV_AUTH_NOT_VALID);
++		}
++
++		ret = sprintf(buf, "%s\n", "OK");
++	}
++
++	return ret;
++}
++#endif /* CONFIG_HOTSPOT_MGR_SUPPORT */
+ 
+ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
+ 				       void *sock_ctx)
+@@ -1559,6 +1584,11 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
+ 		reply_len = hostapd_ctrl_iface_vendor(hapd, buf + 7, reply,
+ 						      reply_size);
+ 
++#ifdef MTK_HARDWARE
++	} else if (os_strncmp(buf, "DRIVER ", 7) == 0) {
++		reply_len = hostapd_driver_cmd(hapd, buf + 7, reply,
++					       reply_size);
++#endif /* CONFIG_HOTSPOT_MGR_SUPPORT */
+ 	} else {
+ 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
+ 		reply_len = 16;
+diff --git a/src/ap/drv_callbacks.c b/src/ap/drv_callbacks.c
+index 09eb89c..e9a4012 100644
+--- a/src/ap/drv_callbacks.c
++++ b/src/ap/drv_callbacks.c
+@@ -361,6 +361,21 @@ skip_wpa_check:
+ 		wpa_auth_sm_event(sta->wpa_sm, WPA_ASSOC);
+ 
+ 	hostapd_new_assoc_sta(hapd, sta, !new_assoc);
++/*
++[ALPS00326459][6575JB][BSP Package][6577JB][CTS Verifier 4.1_r2][MT6577_PHONE][changelist 996001]
++GROUP JOIN 2 cases fail in Wi-Fi Direct Test
++*/
++#ifdef MTK_HARDWARE
++	if ((!hapd->conf->ieee802_1x && !hapd->conf->wpa) ||
++		sta->auth_alg == WLAN_AUTH_FT) {
++		/*
++		 * Open, static WEP, or FT protocol; no separate authorization
++		 * step.
++		 */
++		wpa_msg(hapd->msg_ctx, MSG_INFO,
++		AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
++	}
++#endif /* CONFIG_MTK_P2P || CONFIG_HOTSPOT_MGR_SUPPORT */
+ 
+ 	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
+ 
+@@ -410,6 +425,21 @@ void hostapd_notif_disassoc(struct hostapd_data *hapd, const u8 *addr)
+ 		return;
+ 	}
+ 
++/*
++[ALPS00326459][6575JB][BSP Package][6577JB][CTS Verifier 4.1_r2][MT6577_PHONE][changelist 996001]
++GROUP JOIN 2 cases fail in Wi-Fi Direct Test
++*/	
++#ifdef MTK_HARDWARE
++	if ((!hapd->conf->ieee802_1x && !hapd->conf->wpa) ||
++		sta->auth_alg == WLAN_AUTH_FT) {
++		/*
++		 * Open, static WEP, or FT protocol; no separate authorization
++		 * step.
++		 */
++		wpa_msg(hapd->msg_ctx, MSG_INFO,
++		AP_STA_DISCONNECTED MACSTR, MAC2STR(sta->addr));
++	}
++#endif /* CONFIG_MTK_P2P || CONFIG_HOTSPOT_MGR_SUPPORT */
+ 	ap_sta_set_authorized(hapd, sta, 0);
+ 	sta->flags &= ~(WLAN_STA_AUTH | WLAN_STA_ASSOC);
+ 	wpa_auth_sm_event(sta->wpa_sm, WPA_DISASSOC);
+diff --git a/src/ap/hostapd.c b/src/ap/hostapd.c
+index 3142391..37ad1d2 100644
+--- a/src/ap/hostapd.c
++++ b/src/ap/hostapd.c
+@@ -1612,6 +1612,10 @@ void hostapd_interface_deinit_free(struct hostapd_iface *iface)
+ 	wpa_printf(MSG_DEBUG, "%s: num_bss=%u conf->num_bss=%u",
+ 		   __func__, (unsigned int) iface->num_bss,
+ 		   (unsigned int) iface->conf->num_bss);
++#ifdef MTK_HARDWARE
++	/* Notify framework about hostapd exit */
++	wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO, WPA_EVENT_TERMINATING);
++#endif
+ 	driver = iface->bss[0]->driver;
+ 	drv_priv = iface->bss[0]->drv_priv;
+ 	hostapd_interface_deinit(iface);
+-- 
+2.15.1
+

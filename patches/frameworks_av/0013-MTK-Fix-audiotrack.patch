@@ -1,0 +1,39 @@
+From 8bdf5383418fca7c4fde8af33e465d85e077b87c Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 12 Jun 2018 11:11:23 +0200
+Subject: [PATCH 13/18] [MTK] Fix audiotrack
+
+---
+ include/media/AudioTrack.h    | 3 ++-
+ media/libmedia/AudioTrack.cpp | 1 +
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/include/media/AudioTrack.h b/include/media/AudioTrack.h
+index 2add89637..81cfdb09f 100644
+--- a/include/media/AudioTrack.h
++++ b/include/media/AudioTrack.h
+@@ -568,7 +568,8 @@ public:
+      * false for the method to return immediately without waiting to try multiple times to write
+      * the full content of the buffer.
+      */
+-            ssize_t     write(const void* buffer, size_t size, bool blocking = true);
++            ssize_t     write(const void* buffer, size_t size);
++            ssize_t     write(const void* buffer, size_t size, bool blocking);
+ 
+     /*
+      * Dumps the state of an audio track.
+diff --git a/media/libmedia/AudioTrack.cpp b/media/libmedia/AudioTrack.cpp
+index dcaaf9dc3..814c08c4b 100644
+--- a/media/libmedia/AudioTrack.cpp
++++ b/media/libmedia/AudioTrack.cpp
+@@ -1752,6 +1752,7 @@ void AudioTrack::releaseBuffer(Buffer* audioBuffer)
+ 
+ // -------------------------------------------------------------------------
+ 
++ssize_t AudioTrack::write(const void* buffer, size_t userSize) { return this->write(buffer, userSize, true); }
+ ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
+ {
+ #ifdef QCOM_DIRECTTRACK
+-- 
+2.15.1
+

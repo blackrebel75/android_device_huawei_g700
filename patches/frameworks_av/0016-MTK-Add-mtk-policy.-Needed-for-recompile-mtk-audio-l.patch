@@ -1,0 +1,168 @@
+From c84b36fb180245c4798fb667824ce38df4e293e1 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Thu, 21 Jun 2018 18:26:27 +0200
+Subject: [PATCH 16/18] [MTK] Add mtk policy. Needed for recompile mtk audio
+ library.
+
+---
+ include/media/AudioSystem.h                 | 30 ++++++++++++++++++++++++++-
+ include/media/IAudioPolicyService.h         |  5 +++++
+ media/libmedia/IAudioPolicyService.cpp      | 32 ++++++++++++++++++++++++++++-
+ services/audiopolicy/AudioPolicyService.cpp | 12 +++++++++++
+ services/audiopolicy/AudioPolicyService.h   |  3 +++
+ 5 files changed, 80 insertions(+), 2 deletions(-)
+
+diff --git a/include/media/AudioSystem.h b/include/media/AudioSystem.h
+index 698bf2eec..f602bc1fc 100644
+--- a/include/media/AudioSystem.h
++++ b/include/media/AudioSystem.h
+@@ -43,7 +43,35 @@ public:
+     /* These are static methods to control the system-wide AudioFlinger
+      * only privileged processes can have access to them
+      */
+-
++#ifdef MTK_HARDWARE
++    static int xWayPlay_Start(int sample_rate);
++    static int xWayPlay_Stop(void);
++    static int xWayPlay_Write(void *buffer, int size_bytes);
++    static int xWayPlay_GetFreeBufferCount(void);
++    static int xWayRec_Start(int sample_rate);
++    static int xWayRec_Stop(void);
++    static int xWayRec_Read(void *buffer, int size_bytes);
++
++    //add by wendy
++    static int ReadRefFromRing(void*buf, uint32_t datasz,void* DLtime);
++    static int GetVoiceUnlockULTime(void* DLtime);
++    static int SetVoiceUnlockSRC(uint outSR, uint outChannel);
++    static bool startVoiceUnlockDL();
++    static bool stopVoiceUnlockDL();
++    static void freeVoiceUnlockDLInstance();
++    static bool getVoiceUnlockDLInstance();
++    static int GetVoiceUnlockDLLatency();
++
++    //add . for AM mode set/get  parameters
++    static status_t GetEMParameter(void *ptr,size_t len);
++    static status_t SetEMParameter(void *ptr,size_t len);
++    static status_t SetAudioCommand(int par1,int par2);
++    static status_t GetAudioCommand(int par1, int *par2);
++    static status_t SetAudioData(int par1,size_t len, void *ptr);
++    static status_t GetAudioData(int par1,size_t len,void *ptr);
++    static status_t SetACFPreviewParameter(void *ptr,size_t len);
++    static status_t SetHCFPreviewParameter(void *ptr,size_t len);
++#endif
+     // mute/unmute microphone
+     static status_t muteMicrophone(bool state);
+     static status_t isMicrophoneMuted(bool *state);
+diff --git a/include/media/IAudioPolicyService.h b/include/media/IAudioPolicyService.h
+index 134dd197a..db8b9e9f5 100644
+--- a/include/media/IAudioPolicyService.h
++++ b/include/media/IAudioPolicyService.h
+@@ -153,6 +153,11 @@ public:
+     virtual audio_mode_t getPhoneState() = 0;
+ 
+     virtual status_t registerPolicyMixes(Vector<AudioMix> mixes, bool registration) = 0;
++
++#ifdef MTK_HARDWARE
++    virtual status_t SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4) = 0;
++#endif
++
+ };
+ 
+ 
+diff --git a/media/libmedia/IAudioPolicyService.cpp b/media/libmedia/IAudioPolicyService.cpp
+index 9d1ecd7ac..14dcbbe0f 100644
+--- a/media/libmedia/IAudioPolicyService.cpp
++++ b/media/libmedia/IAudioPolicyService.cpp
+@@ -70,7 +70,11 @@ enum {
+     ACQUIRE_SOUNDTRIGGER_SESSION,
+     RELEASE_SOUNDTRIGGER_SESSION,
+     GET_PHONE_STATE,
+-    REGISTER_POLICY_MIXES,
++    REGISTER_POLICY_MIXES
++#ifdef MTK_HARDWARE
++    ,
++    SET_POLICYMANAGER_PARAMETERS
++#endif
+ };
+ 
+ #define MAX_ITEMS_PER_LIST 1024
+@@ -492,6 +496,20 @@ public:
+         return status;
+     }
+ 
++#ifdef MTK_HARDWARE
++    virtual status_t SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4)
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(IAudioPolicyService::getInterfaceDescriptor());
++        data.writeInt32(par1);
++        data.writeInt32(par2);
++        data.writeInt32(par3);
++        data.writeInt32(par4);
++        remote()->transact(SET_POLICYMANAGER_PARAMETERS, data, &reply);
++        return static_cast <status_t> (reply.readInt32());
++    }
++#endif
++
+     virtual bool isOffloadSupported(const audio_offload_info_t& info)
+     {
+         Parcel data, reply;
+@@ -1050,6 +1068,18 @@ status_t BnAudioPolicyService::onTransact(
+             return status;
+         }
+ 
++#ifdef MTK_HARDWARE
++        case SET_POLICYMANAGER_PARAMETERS: {
++            CHECK_INTERFACE(IAudioPolicyService, data, reply);
++            int par1 =data.readInt32();
++            int par2 =data.readInt32();
++            int par3 =data.readInt32();
++            int par4 =data.readInt32();
++            reply->writeInt32(SetPolicyManagerParameters(par1,par2,par3,par4));
++            return NO_ERROR;
++        } break;
++#endif
++
+         case IS_OFFLOAD_SUPPORTED: {
+             CHECK_INTERFACE(IAudioPolicyService, data, reply);
+             audio_offload_info_t info = {};
+diff --git a/services/audiopolicy/AudioPolicyService.cpp b/services/audiopolicy/AudioPolicyService.cpp
+index 30794541b..cd033c97f 100644
+--- a/services/audiopolicy/AudioPolicyService.cpp
++++ b/services/audiopolicy/AudioPolicyService.cpp
+@@ -276,6 +276,18 @@ void AudioPolicyService::setPowerHint(bool active) {
+     }
+ }
+ 
++#ifdef MTK_HARDWARE
++status_t AudioPolicyService::SetPolicyManagerParameters(int par1, int par2, int par3 , int par4)
++{
++    if (mpAudioPolicy == NULL) {
++        return 0;
++    }
++    //SetPolicyManagerParameters no need to hold mlock.
++    //Mutex::Autolock _l(mLock);
++    return mpAudioPolicy->set_policy_parameters(mpAudioPolicy, par1, par2,par3,par4);
++}
++#endif
++
+ static bool tryLock(Mutex& mutex)
+ {
+     bool locked = false;
+diff --git a/services/audiopolicy/AudioPolicyService.h b/services/audiopolicy/AudioPolicyService.h
+index fe2a3f657..32dc6f2ef 100644
+--- a/services/audiopolicy/AudioPolicyService.h
++++ b/services/audiopolicy/AudioPolicyService.h
+@@ -129,6 +129,9 @@ public:
+     virtual bool isStreamActive(audio_stream_type_t stream, uint32_t inPastMs = 0) const;
+     virtual bool isStreamActiveRemotely(audio_stream_type_t stream, uint32_t inPastMs = 0) const;
+     virtual bool isSourceActive(audio_source_t source) const;
++#ifdef MTK_HARDWARE
++    virtual status_t SetPolicyManagerParameters(int par1, int par2, int par3 , int par4);
++#endif
+ 
+     virtual status_t queryDefaultPreProcessing(int audioSession,
+                                               effect_descriptor_t *descriptors,
+-- 
+2.15.1
+

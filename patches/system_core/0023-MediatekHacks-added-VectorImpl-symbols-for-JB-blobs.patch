@@ -1,0 +1,40 @@
+From 18e2afcc71e58429dab6a0213022b1b29252688c Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 10 Jan 2018 02:06:37 +0100
+Subject: [PATCH 23/27] MediatekHacks: added VectorImpl symbols for JB blobs
+
+Change-Id: I9929a59eb170b2ea35ef8df17c84961e39dae1b5 (reverted from commit c83acca13e2e9a2eca2f50137c580da8c0f05732)
+---
+ libutils/MediatekHacks.cpp | 16 ----------------
+ 1 file changed, 16 deletions(-)
+
+diff --git a/libutils/MediatekHacks.cpp b/libutils/MediatekHacks.cpp
+index 33daa344..51128507 100644
+--- a/libutils/MediatekHacks.cpp
++++ b/libutils/MediatekHacks.cpp
+@@ -1,22 +1,6 @@
+ extern "C" {
+     void _ZN7android6Tracer4initEv(){}
+     void _ZNK7android9CallStack4dumpEPKc(){}
+-    void _ZN7android10VectorImpl19reservedVectorImpl1Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl2Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl3Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl4Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl5Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl6Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl7Ev() { };
+-    void _ZN7android10VectorImpl19reservedVectorImpl8Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl1Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl2Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl3Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl4Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl5Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl6Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl7Ev() { };
+-    void _ZN7android16SortedVectorImpl25reservedSortedVectorImpl8Ev() { };
+     volatile int _ZN7android6Tracer8sIsReadyE = 1;
+     unsigned long long _ZN7android6Tracer12sEnabledTagsE = 0;
+     int _ZN7android6Tracer8sTraceFDE = -1;
+-- 
+2.15.1
+

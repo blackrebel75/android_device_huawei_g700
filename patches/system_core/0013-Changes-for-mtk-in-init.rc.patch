@@ -1,0 +1,59 @@
+From ddd2435d75f5a61d03ead8787dd3d4ffe842f72c Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 15 Feb 2017 10:38:43 +0100
+Subject: [PATCH 13/27] Changes for mtk in init.rc
+
+Change-Id: I3d60ff993566924504ac7e0e250ad25e2eca2288
+---
+ rootdir/init.rc | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 0c648fe7..ed567dc4 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -520,7 +520,7 @@ on property:ro.debuggable=1
+ service adbd /sbin/adbd --root_seclabel=u:r:su:s0
+     class core
+     socket adbd stream 660 system system
+-    disabled
++    enabled
+     seclabel u:r:adbd:s0
+ 
+ # adbd on at boot in emulator
+@@ -563,19 +563,19 @@ service debuggerd64 /system/bin/debuggerd64
+ 
+ service surfaceflinger /system/bin/surfaceflinger
+     class core
+-    user system
++    user root
+     group graphics drmrpc
+     onrestart restart zygote
+ 
+ service drm /system/bin/drmserver
+     class main
+     user drm
+-    group drm system inet drmrpc
++    group drm system inet drmrpc sdcard_r
+ 
+ service media /system/bin/mediaserver
+     class main
+-    user media
+-    group audio camera inet net_bt net_bt_admin net_bw_acct drmrpc mediadrm qcom_diag nvram ccci
++    user root
++    group audio camera inet net_bt net_bt_admin net_bw_acct drmrpc mediadrm qcom_diag media sdcard_r system net_bt_stack
+     ioprio rt 4
+ 
+ # One shot invocation to deal with encrypted volume.
+@@ -595,7 +595,7 @@ service encrypt /system/bin/vdc --wait cryptfs enablecrypto inplace default
+ service bootanim /system/bin/bootanimation
+     class core
+     user graphics
+-    group graphics audio
++    group graphics media audio
+     disabled
+     oneshot
+ 
+-- 
+2.15.1
+

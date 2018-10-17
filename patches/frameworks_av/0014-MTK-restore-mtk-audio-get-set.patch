@@ -1,0 +1,196 @@
+From 4626e991006d90c95fbb02f4c23f3e49ade14c8f Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Fri, 15 Jun 2018 13:31:21 +0200
+Subject: [PATCH 14/18] [MTK] restore mtk audio get/set
+
+---
+ include/media/IAudioFlinger.h          |  4 +++
+ media/libmedia/AudioSystem.cpp         | 23 ++++++++++++++
+ media/libmedia/IAudioFlinger.cpp       | 56 ++++++++++++++++++++++++++++++++++
+ services/audioflinger/AudioFlinger.cpp | 23 ++++++++++++++
+ services/audioflinger/AudioFlinger.h   |  5 +++
+ 5 files changed, 111 insertions(+)
+
+diff --git a/include/media/IAudioFlinger.h b/include/media/IAudioFlinger.h
+index 54be5f38d..dc82377fc 100644
+--- a/include/media/IAudioFlinger.h
++++ b/include/media/IAudioFlinger.h
+@@ -258,6 +258,10 @@ public:
+ 
+     /* Get the HW synchronization source used for an audio session */
+     virtual audio_hw_sync_t getAudioHwSyncForSession(audio_session_t sessionId) = 0;
++#ifdef MTK_HARDWARE
++    virtual status_t SetAudioData(int par1,size_t len,void *ptr)=0;
++    virtual status_t GetAudioData(int par1,size_t len,void *ptr)=0;
++#endif
+ };
+ 
+ 
+diff --git a/media/libmedia/AudioSystem.cpp b/media/libmedia/AudioSystem.cpp
+index 9cae21c68..50528b859 100644
+--- a/media/libmedia/AudioSystem.cpp
++++ b/media/libmedia/AudioSystem.cpp
+@@ -965,6 +965,29 @@ status_t AudioSystem::registerPolicyMixes(Vector<AudioMix> mixes, bool registrat
+     return aps->registerPolicyMixes(mixes, registration);
+ }
+ 
++#ifdef MTK_HARDWARE
++status_t AudioSystem::SetAudioData(int par1,size_t byte_len,void *ptr) {
++     ALOGD("SetAudioData");
++     const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
++     if (af == 0)
++     {
++         ALOGE("AudioSystem::SetAAudioData Error!! PERMISSION_DENIED");
++         return PERMISSION_DENIED;
++     }
++     return af->SetAudioData(par1,byte_len,ptr);
++}
++
++status_t AudioSystem::GetAudioData(int par1,size_t byte_len,void *ptr) {
++     ALOGD("GetAudioData");
++     const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
++     if (af == 0) {
++         ALOGE("AudioSystem::GetAAudioData Error!! PERMISSION_DENIED");
++         return PERMISSION_DENIED;
++     }
++     return af->GetAudioData(par1,byte_len,ptr);
++}
++#endif
++
+ // ---------------------------------------------------------------------------
+ 
+ void AudioSystem::AudioPolicyServiceClient::binderDied(const wp<IBinder>& who __unused)
+diff --git a/media/libmedia/IAudioFlinger.cpp b/media/libmedia/IAudioFlinger.cpp
+index 3f76506a2..42f92679f 100644
+--- a/media/libmedia/IAudioFlinger.cpp
++++ b/media/libmedia/IAudioFlinger.cpp
+@@ -85,6 +85,10 @@ enum {
+ #ifdef QCOM_DIRECTTRACK
+     CREATE_DIRECT_TRACK,
+ #endif
++#ifdef MTK_HARDWARE
++	SET_AUDIO_DATA,
++	GET_AUDIO_DATA,
++#endif
+ };
+ 
+ #define MAX_ITEMS_PER_LIST 1024
+@@ -944,6 +948,32 @@ public:
+         }
+         return (audio_hw_sync_t)reply.readInt32();
+     }
++
++#ifdef MTK_HARDWARE
++    virtual status_t SetAudioData(int par1, size_t len,void *ptr)
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
++        data.writeInt32(par1);
++        data.writeInt32(len);
++        data.write(ptr,len);
++        remote()->transact(SET_AUDIO_DATA, data, &reply);
++        reply.read(ptr, len);
++        return OK;
++    }
++    virtual status_t GetAudioData(int par1, size_t len,void *ptr)
++    {
++        Parcel data, reply;
++        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
++        data.writeInt32(par1);
++        data.writeInt32(len);
++        data.write(ptr,len);
++        remote()->transact(GET_AUDIO_DATA, data, &reply);
++        reply.read(ptr, len);
++        return OK;
++    }
++#endif
++
+ };
+ 
+ IMPLEMENT_META_INTERFACE(AudioFlinger, "android.media.IAudioFlinger");
+@@ -1465,6 +1495,32 @@ status_t BnAudioFlinger::onTransact(
+             reply->writeInt32(getAudioHwSyncForSession((audio_session_t)data.readInt32()));
+             return NO_ERROR;
+         } break;
++#ifdef MTK_HARDWARE
++        case SET_AUDIO_DATA:
++        {
++            CHECK_INTERFACE(IAudioFlinger, data, reply);
++            size_t command = data.readInt32();
++            size_t buf_size = data.readInt32();
++            void *params = malloc(buf_size);
++            data.read(params, buf_size);
++            status_t err = SetAudioData(command,buf_size,params);
++            reply->write(params,buf_size);
++            free(params);
++            return NO_ERROR;
++        }break;
++        case GET_AUDIO_DATA:
++        {
++            CHECK_INTERFACE(IAudioFlinger, data, reply);
++            size_t command = data.readInt32();
++            size_t buf_size = data.readInt32();
++            void *params = malloc(buf_size);
++            data.read(params, buf_size);
++            status_t err = GetAudioData(command,buf_size,params);
++            reply->write(params,buf_size);
++            free(params);
++            return NO_ERROR;
++        }break;
++#endif
+         default:
+             return BBinder::onTransact(code, data, reply, flags);
+     }
+diff --git a/services/audioflinger/AudioFlinger.cpp b/services/audioflinger/AudioFlinger.cpp
+index 772c3219b..d348259fd 100644
+--- a/services/audioflinger/AudioFlinger.cpp
++++ b/services/audioflinger/AudioFlinger.cpp
+@@ -137,6 +137,29 @@ size_t AudioFlinger::mTeeSinkTrackFrames = kTeeSinkTrackFramesDefault;
+ static const nsecs_t kMinGlobalEffectEnabletimeNs = seconds(7200);
+ 
+ // ----------------------------------------------------------------------------
++#ifdef MTK_HARDWARE
++status_t AudioFlinger::SetAudioData(int par1,size_t len,void *ptr)
++{
++    ALOGV("SetAudioData par1 = %d,len = %d ",par1,len);
++    AutoMutex lock(mHardwareLock);
++    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
++    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
++    dev->SetAudioData(dev,par1,len,ptr);
++    mHardwareStatus = AUDIO_HW_IDLE;
++    return NO_ERROR;
++}
++
++status_t AudioFlinger::GetAudioData(int par1,size_t len,void *ptr)
++{
++    ALOGV("GetAudioData par1 = %d,len = %d ",par1,len);
++    AutoMutex lock(mHardwareLock);
++    audio_hw_device_t *dev = mPrimaryHardwareDev->hwDevice();
++    mHardwareStatus = AUDIO_HW_SET_PARAMETER;
++    dev->GetAudioData(dev,par1,len,ptr);
++    mHardwareStatus = AUDIO_HW_IDLE;
++    return NO_ERROR;
++}
++#endif
+ 
+ const char *formatToString(audio_format_t format) {
+     switch (format & AUDIO_FORMAT_MAIN_MASK) {
+diff --git a/services/audioflinger/AudioFlinger.h b/services/audioflinger/AudioFlinger.h
+index 3b1b6c399..336020294 100644
+--- a/services/audioflinger/AudioFlinger.h
++++ b/services/audioflinger/AudioFlinger.h
+@@ -124,6 +124,11 @@ class AudioFlinger :
+ public:
+     static const char* getServiceName() ANDROID_API { return "media.audio_flinger"; }
+ 
++#ifdef MTK_HARDWARE
++    virtual status_t SetAudioData(int par1,size_t len, void *ptr);
++    virtual status_t GetAudioData(int par1,size_t len, void *ptr);
++#endif
++
+     virtual     status_t    dump(int fd, const Vector<String16>& args);
+ 
+     // IAudioFlinger interface, in binder opcode order
+-- 
+2.15.1
+

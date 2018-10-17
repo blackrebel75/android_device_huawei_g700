@@ -1,0 +1,32 @@
+From abdf020d95e0ee089340f3f48fa7e6788b1d40f5 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 21:26:29 +0200
+Subject: [PATCH] compiling fix
+
+---
+ src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp b/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
+index 5a89ef5cb..254c3848a 100644
+--- a/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
++++ b/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
+@@ -194,15 +194,10 @@ static GrGLInterface* create_es_interface(GrGLVersion version,
+ 
+ #endif
+ 
+-#if GL_ES_VERSION_3_0 || GL_EXT_map_buffer_range
+-    functions->fMapBufferRange = glMapBufferRange;
+-    functions->fFlushMappedBufferRange = glFlushMappedBufferRange;
+-#else
+     if (version >= GR_GL_VER(3,0) || extensions->has("GL_EXT_map_buffer_range")) {
+         functions->fMapBufferRange = (GrGLMapBufferRangeProc) eglGetProcAddress("glMapBufferRange");
+         functions->fFlushMappedBufferRange = (GrGLFlushMappedBufferRangeProc) eglGetProcAddress("glFlushMappedBufferRange");
+     }
+-#endif
+ 
+     if (extensions->has("GL_EXT_debug_marker")) {
+         functions->fInsertEventMarker = (GrGLInsertEventMarkerProc) eglGetProcAddress("glInsertEventMarker");
+-- 
+2.15.1
+

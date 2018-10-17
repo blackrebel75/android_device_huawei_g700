@@ -1,0 +1,46 @@
+From 2e2dce0554234510b0a8735f19644728a68141ec Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 27 May 2015 21:25:03 +0200
+Subject: [PATCH] Revert "Add EXT suffix to EXT_map_buffer_range references"
+
+This reverts commit 4d9fde855c1e6479b3b2dec95fb4dbbce0e62eb9.
+---
+ .../gl/android/GrGLCreateNativeInterface_android.cpp   | 18 +++++-------------
+ 1 file changed, 5 insertions(+), 13 deletions(-)
+
+diff --git a/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp b/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
+index 781e29bc9..5a89ef5cb 100644
+--- a/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
++++ b/src/gpu/gl/android/GrGLCreateNativeInterface_android.cpp
+@@ -194,23 +194,15 @@ static GrGLInterface* create_es_interface(GrGLVersion version,
+ 
+ #endif
+ 
+-    if (version >= GR_GL_VER(3,0)) {
+-#if GL_ES_VERSION_3_0
+-        functions->fMapBufferRange = glMapBufferRange;
+-        functions->fFlushMappedBufferRange = glFlushMappedBufferRange;
++#if GL_ES_VERSION_3_0 || GL_EXT_map_buffer_range
++    functions->fMapBufferRange = glMapBufferRange;
++    functions->fFlushMappedBufferRange = glFlushMappedBufferRange;
+ #else
++    if (version >= GR_GL_VER(3,0) || extensions->has("GL_EXT_map_buffer_range")) {
+         functions->fMapBufferRange = (GrGLMapBufferRangeProc) eglGetProcAddress("glMapBufferRange");
+         functions->fFlushMappedBufferRange = (GrGLFlushMappedBufferRangeProc) eglGetProcAddress("glFlushMappedBufferRange");
+-#endif
+-    } else if (extensions->has("GL_EXT_map_buffer_range")) {
+-#if GL_EXT_map_buffer_range
+-        functions->fMapBufferRange = glMapBufferRangeEXT;
+-        functions->fFlushMappedBufferRange = glFlushMappedBufferRangeEXT;
+-#else
+-        functions->fMapBufferRange = (GrGLMapBufferRangeProc) eglGetProcAddress("glMapBufferRangeEXT");
+-        functions->fFlushMappedBufferRange = (GrGLFlushMappedBufferRangeProc) eglGetProcAddress("glFlushMappedBufferRangeEXT");
+-#endif
+     }
++#endif
+ 
+     if (extensions->has("GL_EXT_debug_marker")) {
+         functions->fInsertEventMarker = (GrGLInsertEventMarkerProc) eglGetProcAddress("glInsertEventMarker");
+-- 
+2.15.1
+

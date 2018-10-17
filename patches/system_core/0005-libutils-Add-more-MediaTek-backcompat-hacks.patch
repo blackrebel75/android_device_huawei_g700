@@ -1,0 +1,39 @@
+From f216b8cb0e343fc378ce2f35803136aae91f5bc4 Mon Sep 17 00:00:00 2001
+From: xplodwild <xplod@ouverta.fr>
+Date: Sun, 5 Jan 2014 17:34:01 +0100
+Subject: [PATCH 05/27] libutils: Add more MediaTek backcompat hacks
+
+Change-Id: I168ffdf5ad73ac80c121f47c6962f3644e86b1ef
+---
+ libutils/Android.mk        | 1 +
+ libutils/MediatekHacks.cpp | 6 ++++++
+ 2 files changed, 7 insertions(+)
+ create mode 100644 libutils/MediatekHacks.cpp
+
+diff --git a/libutils/Android.mk b/libutils/Android.mk
+index d08f0545..6565d447 100644
+--- a/libutils/Android.mk
++++ b/libutils/Android.mk
+@@ -93,6 +93,7 @@ LOCAL_CFLAGS += -Werror
+ 
+ ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
+ LOCAL_CFLAGS += -DMTK_MT6589
++LOCAL_SRC_FILES += MediatekHacks.cpp
+ endif
+ 
+ LOCAL_C_INCLUDES += \
+diff --git a/libutils/MediatekHacks.cpp b/libutils/MediatekHacks.cpp
+new file mode 100644
+index 00000000..bc115531
+--- /dev/null
++++ b/libutils/MediatekHacks.cpp
+@@ -0,0 +1,6 @@
++extern "C" {
++    void _ZN7android6Tracer4initEv(){}
++    volatile int _ZN7android6Tracer8sIsReadyE = 1;
++    unsigned long long _ZN7android6Tracer12sEnabledTagsE = 0;
++    int _ZN7android6Tracer8sTraceFDE = -1;
++}
+-- 
+2.15.1
+

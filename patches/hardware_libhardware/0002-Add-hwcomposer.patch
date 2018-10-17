@@ -1,0 +1,106 @@
+From caf19656a6da4304adfdd20fa0e77f37a0d6aa10 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Sat, 21 Apr 2018 03:28:47 +0200
+Subject: [PATCH 2/4] Add hwcomposer
+
+---
+ include/hardware/camera_common.h   |  2 +-
+ include/hardware/hwcomposer.h      |  8 ++++++--
+ include/hardware/hwcomposer_defs.h | 38 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 45 insertions(+), 3 deletions(-)
+
+diff --git a/include/hardware/camera_common.h b/include/hardware/camera_common.h
+index 965086c..af9d9da 100644
+--- a/include/hardware/camera_common.h
++++ b/include/hardware/camera_common.h
+@@ -189,7 +189,7 @@ typedef struct camera_info {
+      */
+     const camera_metadata_t *static_camera_characteristics;
+ 
+-} camera_info_t;
++} _camera_info_t;
+ 
+ /**
+  * camera_device_status_t:
+diff --git a/include/hardware/hwcomposer.h b/include/hardware/hwcomposer.h
+index 392a464..e3a49e8 100644
+--- a/include/hardware/hwcomposer.h
++++ b/include/hardware/hwcomposer.h
+@@ -303,10 +303,13 @@ typedef struct hwc_layer_1 {
+              *   pixel.a = planeAlpha;
+              *
+              */
++             
++#ifndef MTK_MT6589
+             uint8_t planeAlpha;
+ 
+             /* reserved for future use */
+             uint8_t _pad[3];
++#endif
+         };
+     };
+ 
+@@ -325,8 +328,9 @@ typedef struct hwc_layer_1 {
+ #ifndef MTK_MT6589
+     uint8_t reserved[96 - 76];
+ #else
+-    int32_t reserved[24 - 19];
+-
++//    int32_t reserved[24 - 18];
++    uint8_t reserved[24 - 18];
++    
+     typedef struct hwc_layer_ext {
+         /* string for distinguish handler */
+         char overlayType[4];
+diff --git a/include/hardware/hwcomposer_defs.h b/include/hardware/hwcomposer_defs.h
+index 08faa28..bb21286 100644
+--- a/include/hardware/hwcomposer_defs.h
++++ b/include/hardware/hwcomposer_defs.h
+@@ -256,6 +256,44 @@ enum {
+     HWC_POWER_MODE_DOZE_SUSPEND  = 3,
+ };
+ 
++#ifdef MTK_MT6589
++/*
++ * hwc_layer_1_t::flags values extension
++ * Need to check if these values are conflict to original AOSP
++ */
++enum {
++    /* HWC_SECURE_LAYER is set by SurfaceFlinger to indicat that the HAL
++     * this layer is protected
++     */
++    HWC_SECURE_LAYER   = 0x10000000,
++
++    /*
++     * HWC_DIRTY_LAYER is set by SurfaceFlinger to indicate that the HAL
++     * this layer has updated content.
++     */
++    HWC_DIRTY_LAYER    = 0x20000000,
++
++    /*
++     * HWC_DIM_LAYER is set by SurfaceFlinger to indicate that the HAL
++     * this layer is used as dim layer if HWC can handle dim effect
++     */
++    HWC_DIM_LAYER      = 0x40000000,
++};
++
++/*
++ * hwc_display_contents_1_t::flags values extension
++ * Need to check if these values are conflict to original AOSP
++ */
++enum {
++    HWC_SWAP_REQUIRED         = 0x20000000,
++    HWC_LAYERSCREENSHOT_EXIST = 0x40000000,
++    HWC_SCREEN_FROZEN         = 0x80000000,
++
++    // HWC_ORIENTATION_MASK is using third byte for external orientation
++    // Added for HWC_DEVICE_API_VERSION_1_0
++    HWC_ORIENTATION_MASK      = 0x00FF0000,
++};
++#endif
+ /*****************************************************************************/
+ 
+ __END_DECLS
+-- 
+2.15.1
+

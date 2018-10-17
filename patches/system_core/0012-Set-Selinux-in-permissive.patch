@@ -1,0 +1,26 @@
+From a3424a934029dda9fa71e986ecfe5938e5966696 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 15 Feb 2017 10:29:21 +0100
+Subject: [PATCH 12/27] Set Selinux in permissive
+
+Change-Id: I8316825c89345abd6371a358607e470a7d279792
+---
+ init/init.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/init/init.c b/init/init.c
+index 1cce8d8c..5d9e752b 100644
+--- a/init/init.c
++++ b/init/init.c
+@@ -926,6 +926,8 @@ static bool selinux_is_disabled(void)
+ 
+ static bool selinux_is_enforcing(void)
+ {
++    return false;  /*return false then set to permissive*/
++
+ #ifdef ALLOW_DISABLE_SELINUX
+     char tmp[PROP_VALUE_MAX];
+ 
+-- 
+2.15.1
+

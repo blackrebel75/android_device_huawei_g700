@@ -1,0 +1,26 @@
+From 21cb8256e0eb19dfff8e3f1b8bcde792351b2207 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Thu, 10 Sep 2015 13:43:55 +0200
+Subject: [PATCH 20/27] Fix led permissions (by hyperion70)
+
+---
+ rootdir/init.rc | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index ed567dc4..82ce4b81 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -416,6 +416,9 @@ on boot
+     chown system system /sys/class/leds/red/device/grpfreq
+     chown system system /sys/class/leds/red/device/grppwm
+     chown system system /sys/class/leds/red/device/blink
++    chown system system /sys/class/leds/red/trigger
++    chown system system /sys/class/leds/green/trigger
++    chown system system /sys/class/leds/blue/trigger
+     chown system system /sys/class/timed_output/vibrator/enable
+     chown system system /sys/module/sco/parameters/disable_esco
+     chown system system /sys/kernel/ipv4/tcp_wmem_min
+-- 
+2.15.1
+

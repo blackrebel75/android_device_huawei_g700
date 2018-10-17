@@ -1,0 +1,39 @@
+From 61500d3f89301f57a65ec326dcf6acfead9c4098 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 11 Nov 2015 19:39:31 +0100
+Subject: [PATCH 16/27] Add missing function for thermal
+
+---
+ include/netutils/ifc.h  | 2 ++
+ libnetutils/ifc_utils.c | 5 +++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/include/netutils/ifc.h b/include/netutils/ifc.h
+index 3b272343..b7d681a8 100644
+--- a/include/netutils/ifc.h
++++ b/include/netutils/ifc.h
+@@ -61,6 +61,8 @@ extern int ifc_configure(const char *ifname, in_addr_t address,
+ 
+ extern in_addr_t prefixLengthToIpv4Netmask(int prefix_length);
+ 
++extern int ifc_set_throttle(const char *ifname, int rxKbps, int txKbps);
++
+ __END_DECLS
+ 
+ #endif /* _NETUTILS_IFC_H_ */
+diff --git a/libnetutils/ifc_utils.c b/libnetutils/ifc_utils.c
+index cb3722d8..e6e9bcdc 100644
+--- a/libnetutils/ifc_utils.c
++++ b/libnetutils/ifc_utils.c
+@@ -711,3 +711,8 @@ ifc_configure(const char *ifname,
+ 
+     return 0;
+ }
++
++int ifc_set_throttle(const char *ifname, int rxKbps, int txKbps) {
++    ALOGD("ifc_set_throttle: ifname=%s, rxKbps=%d, txKbps=%d", ifname, rxKbps, txKbps);
++    return 0;
++}
+-- 
+2.15.1
+

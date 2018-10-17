@@ -1,0 +1,25 @@
+From 1855e42b60366ed92206b5980c87859f8e453399 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Mon, 1 Jan 2018 16:55:35 +0100
+Subject: [PATCH] Use prebuilt google webview
+
+---
+ target/product/core_minimal.mk | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/target/product/core_minimal.mk b/target/product/core_minimal.mk
+index 89b1cba4b..e4a5b8920 100644
+--- a/target/product/core_minimal.mk
++++ b/target/product/core_minimal.mk
+@@ -76,6 +76,8 @@ PRODUCT_PACKAGES += \
+     webview \
+     wifi-service
+ 
++PRODUCT_PACKAGES += \ libwebviewchromium_plat_support \ libwebviewchromium_loader
++
+ PRODUCT_COPY_FILES += \
+     frameworks/native/data/etc/android.software.webview.xml:system/etc/permissions/android.software.webview.xml
+ 
+-- 
+2.15.1
+

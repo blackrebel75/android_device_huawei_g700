@@ -1,0 +1,46 @@
+From 9dba60cc7452defd2c3404d662cdc453a5135311 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Fri, 7 Apr 2017 17:42:40 +0200
+Subject: [PATCH 1/9] Fix rotation artifacts. Original patch here
+ https://gist.github.com/pawitp/7891444. Many thanks.
+
+Change-Id: I799b06f52334018e2647e61deb186c6f3e062070
+---
+ services/surfaceflinger/Android.mk         | 4 ++++
+ services/surfaceflinger/SurfaceFlinger.cpp | 5 +++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/services/surfaceflinger/Android.mk b/services/surfaceflinger/Android.mk
+index f9a6852b6..ae9f84279 100644
+--- a/services/surfaceflinger/Android.mk
++++ b/services/surfaceflinger/Android.mk
+@@ -40,6 +40,10 @@ LOCAL_SRC_FILES:= \
+ LOCAL_CFLAGS:= -DLOG_TAG=\"SurfaceFlinger\"
+ LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -DEGL_EGLEXT_PROTOTYPES
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++LOCAL_CFLAGS += -DMTK_MT6589
++endif
++
+ ifeq ($(TARGET_BOARD_PLATFORM),omap4)
+ 	LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY
+ endif
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 3a0c82077..8803580db 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -3746,6 +3746,11 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+         bool useReadPixels)
+ {
+     ATRACE_CALL();
++    
++// Rotation artifact problems when useReadPixels is false
++#ifdef MTK_MT6589
++    useReadPixels = true;
++#endif
+ 
+     // get screen geometry
+     const uint32_t hw_w = hw->getWidth();
+-- 
+2.15.1
+

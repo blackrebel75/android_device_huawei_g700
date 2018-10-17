@@ -1,0 +1,705 @@
+From 685ba88257065e7714aa020d699742453855791f Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 19 Jun 2018 18:29:39 +0200
+Subject: [PATCH] [MTK] Update mtk audio policy
+
+---
+ audio/AudioHardwareInterface.cpp                 |  93 +++++++++++++
+ audio/AudioPolicyManagerBase.cpp                 |  32 ++++-
+ audio/audio_hw_hal.cpp                           | 163 +++++++++++++++++++++++
+ include/hardware_legacy/AudioHardwareBase.h      |  49 ++++++-
+ include/hardware_legacy/AudioHardwareInterface.h |  40 ++++++
+ include/hardware_legacy/AudioPolicyInterface.h   |   3 +
+ include/hardware_legacy/AudioPolicyManagerBase.h |   3 +
+ include/hardware_legacy/AudioSystemLegacy.h      |  91 ++++++-------
+ 8 files changed, 418 insertions(+), 56 deletions(-)
+
+diff --git a/audio/AudioHardwareInterface.cpp b/audio/AudioHardwareInterface.cpp
+index 81b3f43..6409e08 100644
+--- a/audio/AudioHardwareInterface.cpp
++++ b/audio/AudioHardwareInterface.cpp
+@@ -97,6 +97,22 @@ status_t AudioHardwareBase::setMode(int mode)
+ }
+ 
+ #ifdef MTK_HARDWARE
++ status_t AudioHardwareBase::SetEMParameter(void *ptr , int len)
++ {
++     return NO_ERROR;
++ }
++ status_t AudioHardwareBase::GetEMParameter(void *ptr , int len)
++ {
++     return NO_ERROR;
++ }
++ status_t AudioHardwareBase::SetAudioCommand(int par1, int par2)
++ {
++     return NO_ERROR;
++ }
++ status_t AudioHardwareBase::GetAudioCommand(int par1)
++ {
++     return NO_ERROR;
++ }
+ status_t AudioHardwareBase::SetAudioData(int par1,size_t len,void *ptr)
+ {
+     return NO_ERROR;
+@@ -105,6 +121,83 @@ status_t AudioHardwareBase::GetAudioData(int par1,size_t len,void *ptr)
+ {
+     return NO_ERROR;
+ }
++ status_t AudioHardwareBase::SetACFPreviewParameter(void *ptr , int len)
++ {
++     return NO_ERROR;
++ }
++ status_t AudioHardwareBase::SetHCFPreviewParameter(void *ptr , int len)
++ {
++     return NO_ERROR;
++ }
++/////////////////////////////////////////////////////////////////////////
++ //    for PCMxWay Interface API ...
++ /////////////////////////////////////////////////////////////////////////
++ int AudioHardwareBase::xWayPlay_Start(int sample_rate)
++ {
++     return NO_ERROR;
++ }
++
++ int AudioHardwareBase::xWayPlay_Stop(void)
++ {
++     return NO_ERROR;
++ }
++ int AudioHardwareBase::xWayPlay_Write(void *buffer, int size_bytes)
++ {
++     return NO_ERROR;
++ }
++ int AudioHardwareBase::xWayPlay_GetFreeBufferCount(void)
++ {
++     return NO_ERROR;
++ }
++int AudioHardwareBase::xWayRec_Start(int sample_rate)
++ {
++     return NO_ERROR;
++ }
++ int AudioHardwareBase::xWayRec_Stop(void)
++ {
++     return NO_ERROR;
++ }
++ int AudioHardwareBase::xWayRec_Read(void *buffer, int size_bytes)
++ {
++     return NO_ERROR;
++ }
++
++ //add by wendy
++ int AudioHardwareBase:: ReadRefFromRing(void*buf, uint32_t datasz,void* DLtime)
++ {
++    return NO_ERROR;
++ }
++ int AudioHardwareBase:: GetVoiceUnlockULTime(void* DLtime)
++ {
++    return NO_ERROR;
++ }
++ int AudioHardwareBase:: SetVoiceUnlockSRC(uint outSR, uint outChannel)
++ {
++    return NO_ERROR;
++ }
++
++ bool AudioHardwareBase:: startVoiceUnlockDL()
++ {
++    return NO_ERROR;
++ }
++
++ bool AudioHardwareBase::stopVoiceUnlockDL()
++ {
++    return NO_ERROR;
++ }
++
++ void AudioHardwareBase::freeVoiceUnlockDLInstance()
++ {
++     return;
++ }
++ int AudioHardwareBase::GetVoiceUnlockDLLatency()
++ {
++  return NO_ERROR;
++ }
++ bool AudioHardwareBase::getVoiceUnlockDLInstance()
++ {
++  return 0;
++ }
+ #endif
+ // default implementation
+ status_t AudioHardwareBase::setParameters(const String8& keyValuePairs)
+diff --git a/audio/AudioPolicyManagerBase.cpp b/audio/AudioPolicyManagerBase.cpp
+index fb3d6be..cb4a572 100644
+--- a/audio/AudioPolicyManagerBase.cpp
++++ b/audio/AudioPolicyManagerBase.cpp
+@@ -2423,7 +2423,7 @@ void AudioPolicyManagerBase::checkA2dpSuspend()
+     if (mA2dpSuspended) {
+         if (((mScoDeviceAddress == "") ||
+              ((mForceUse[AudioSystem::FOR_COMMUNICATION] != AudioSystem::FORCE_BT_SCO) &&
+-              (mForceUse[AudioSystem::FOR_RECORD] != AudioSystem::FORCE_BT_SCO))) ||
++              (mForceUse[AudioSystem::FOR_RECORD] != AudioSystem::FORCE_BT_SCO))) &&
+              ((mPhoneState != AudioSystem::MODE_IN_CALL) &&
+               (mPhoneState != AudioSystem::MODE_RINGTONE))) {
+ 
+@@ -2433,7 +2433,7 @@ void AudioPolicyManagerBase::checkA2dpSuspend()
+     } else {
+         if (((mScoDeviceAddress != "") &&
+              ((mForceUse[AudioSystem::FOR_COMMUNICATION] == AudioSystem::FORCE_BT_SCO) ||
+-              (mForceUse[AudioSystem::FOR_RECORD] == AudioSystem::FORCE_BT_SCO))) &&
++              (mForceUse[AudioSystem::FOR_RECORD] == AudioSystem::FORCE_BT_SCO))) ||
+              ((mPhoneState == AudioSystem::MODE_IN_CALL) ||
+               (mPhoneState == AudioSystem::MODE_RINGTONE))) {
+ 
+@@ -3206,6 +3206,28 @@ const AudioPolicyManagerBase::VolumeCurvePoint
+         sSpeakerMediaVolumeCurve, // DEVICE_CATEGORY_SPEAKER
+         sDefaultMediaVolumeCurve  // DEVICE_CATEGORY_EARPIECE
+     },
++    //#ifdef MTK_AUDIO
++    { // AUDIO_STREAM_FM
++        sDefaultMediaVolumeCurve, // DEVICE_CATEGORY_HEADSET
++        sSpeakerMediaVolumeCurve, // DEVICE_CATEGORY_SPEAKER
++        sDefaultMediaVolumeCurve  // DEVICE_CATEGORY_EARPIECE
++    },
++    { // AUDIO_STREAM_ATV
++        sDefaultMediaVolumeCurve, // DEVICE_CATEGORY_HEADSET
++        sSpeakerMediaVolumeCurve, // DEVICE_CATEGORY_SPEAKER
++        sDefaultMediaVolumeCurve  // DEVICE_CATEGORY_EARPIECE
++    },
++    { // AUDIO_STREAM_BOOT
++        sDefaultMediaVolumeCurve, // DEVICE_CATEGORY_HEADSET
++        sSpeakerMediaVolumeCurve, // DEVICE_CATEGORY_SPEAKER
++        sDefaultMediaVolumeCurve  // DEVICE_CATEGORY_EARPIECE
++    },
++    { // AUDIO_STREAM_VIBSPK
++        sDefaultMediaVolumeCurve, // DEVICE_CATEGORY_HEADSET
++        sSpeakerMediaVolumeCurve, // DEVICE_CATEGORY_SPEAKER
++        sDefaultMediaVolumeCurve  // DEVICE_CATEGORY_EARPIECE
++    },
++//#endif
+ };
+ 
+ void AudioPolicyManagerBase::initializeVolumeCurves()
+@@ -4363,5 +4385,11 @@ void AudioPolicyManagerBase::defaultAudioPolicyConfig(void)
+ 
+     mHwModules.add(module);
+ }
++#ifdef MTK_HARDWARE
++status_t AudioPolicyManagerBase::SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4)
++{
++    return NO_ERROR;
++}
++#endif
+ 
+ }; // namespace android
+diff --git a/audio/audio_hw_hal.cpp b/audio/audio_hw_hal.cpp
+index 7949a90..dcda573 100644
+--- a/audio/audio_hw_hal.cpp
++++ b/audio/audio_hw_hal.cpp
+@@ -601,6 +601,143 @@ err_open:
+     *stream_in = NULL;
+     return ret;
+ }
++// not ANDROID_DEFAULT_CODE
++//-----------------------------------------------------------------
++static int adev_set_emparameter(struct audio_hw_device *dev,void *ptr , int len)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetEMParameter(ptr,len);
++}
++
++static int adev_get_emparameter(struct audio_hw_device *dev,void *ptr , int len)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->GetEMParameter(ptr,len);
++}
++
++static int adev_set_audiocommand(struct audio_hw_device *dev,int par1 , int par2)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetAudioCommand(par1,par2);
++}
++
++static int adev_get_audiocommand(struct audio_hw_device *dev,int par1)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->GetAudioCommand(par1);
++}
++
++static int adev_set_audiodata(struct audio_hw_device *dev,int par1,size_t len,void *ptr)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetAudioData(par1,len,ptr);
++}
++
++static int adev_get_audiodata(struct audio_hw_device *dev,int par1,size_t len,void *ptr)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->GetAudioData(par1,len,ptr);
++}
++
++static int adev_set_acf_previewparameter(struct audio_hw_device *dev,void *ptr , int len)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetACFPreviewParameter(ptr,len);
++}
++
++static int adev_set_hcf_previewparameter(struct audio_hw_device *dev,void *ptr , int len)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetHCFPreviewParameter(ptr,len);
++}
++
++static int adev_xway_play_start(struct audio_hw_device *dev,int sample_rate)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayPlay_Start(sample_rate);
++}
++
++static int adev_xway_play_stop(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayPlay_Stop();
++}
++
++static int adev_xway_play_write(struct audio_hw_device *dev,void* buffer ,int size_bytes)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayPlay_Write(buffer,size_bytes);
++}
++
++static int adev_xway_getfreebuffercount(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayPlay_GetFreeBufferCount();
++}
++
++static int adev_xway_rec_start(struct audio_hw_device *dev,int smple_rate)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayRec_Start(smple_rate);
++}
++
++static int adev_xway_rec_stop(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayRec_Stop();
++}
++
++static int adev_xway_rec_read(struct audio_hw_device *dev,void* buffer , int size_bytes)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->xWayRec_Read(buffer,size_bytes);
++}
++
++//add by wendy
++static int adev_ReadRefFromRing(struct audio_hw_device *dev,void*buf, uint32_t datasz,void* DLtime)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->ReadRefFromRing(buf, datasz, DLtime);
++}
++static int adev_GetVoiceUnlockULTime(struct audio_hw_device *dev,void* DLtime)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->GetVoiceUnlockULTime( DLtime);
++}
++static int adev_SetVoiceUnlockSRC(struct audio_hw_device *dev,uint outSR, uint outChannel)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->SetVoiceUnlockSRC(outSR,outChannel);
++}
++static bool adev_startVoiceUnlockDL(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->startVoiceUnlockDL();
++}
++static bool adev_stopVoiceUnlockDL(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->stopVoiceUnlockDL();
++}
++
++static void adev_freeVoiceUnlockDLInstance(struct audio_hw_device *dev)
++{
++    struct legacy_audio_device *ladev = to_ladev(dev);
++    return ladev->hwif->freeVoiceUnlockDLInstance();
++}
++static int adev_GetVoiceUnlockDLLatency(struct audio_hw_device *dev)    
++{
++ struct legacy_audio_device *ladev = to_ladev(dev);
++ return ladev->hwif->GetVoiceUnlockDLLatency();
++
++}
++static bool adev_getVoiceUnlockDLInstance(struct audio_hw_device *dev)
++{
++struct legacy_audio_device *ladev = to_ladev(dev);
++return ladev->hwif->getVoiceUnlockDLInstance();
++}
++
++//-------------------------------------------------------------------------
+ 
+ static void adev_close_input_stream(struct audio_hw_device *dev,
+                                struct audio_stream_in *stream)
+@@ -671,6 +808,32 @@ static int legacy_adev_open(const hw_module_t* module, const char* name,
+     ladev->device.close_input_stream = adev_close_input_stream;
+     ladev->device.dump = adev_dump;
+ 
++// not ANDROID_DEFAULT_CODE
++    ladev->device.SetEMParameter = adev_set_emparameter;
++    ladev->device.GetEMParameter = adev_get_emparameter;
++    ladev->device.SetAudioCommand = adev_set_audiocommand;
++    ladev->device.GetAudioCommand = adev_get_audiocommand;
++    ladev->device.SetAudioData = adev_set_audiodata;
++    ladev->device.GetAudioData = adev_get_audiodata;
++    ladev->device.SetACFPreviewParameter = adev_set_acf_previewparameter;
++    ladev->device.SetHCFPreviewParameter = adev_set_hcf_previewparameter;
++    ladev->device.xWayPlay_Start = adev_xway_play_start;
++    ladev->device.xWayPlay_Stop = adev_xway_play_stop;
++    ladev->device.xWayPlay_Write = adev_xway_play_write;
++    ladev->device.xWayPlay_GetFreeBufferCount = adev_xway_getfreebuffercount;
++    ladev->device.xWayRec_Start = adev_xway_rec_start;
++    ladev->device.xWayRec_Stop = adev_xway_rec_stop;
++    ladev->device.xWayRec_Read = adev_xway_rec_read;
++    //added by wendy
++    ladev->device.ReadRefFromRing = adev_ReadRefFromRing;
++    ladev->device.GetVoiceUnlockULTime = adev_GetVoiceUnlockULTime;
++    ladev->device.SetVoiceUnlockSRC = adev_SetVoiceUnlockSRC;
++    ladev->device.startVoiceUnlockDL = adev_startVoiceUnlockDL;
++    ladev->device.stopVoiceUnlockDL = adev_stopVoiceUnlockDL;
++    ladev->device.freeVoiceUnlockDLInstance = adev_freeVoiceUnlockDLInstance;
++    ladev->device.GetVoiceUnlockDLLatency = adev_GetVoiceUnlockDLLatency;
++    ladev->device.getVoiceUnlockDLInstance = adev_getVoiceUnlockDLInstance;
++// not ANDROID_DEFAULT_CODE
+     ladev->hwif = createAudioHardware();
+     if (!ladev->hwif) {
+         ret = -EIO;
+diff --git a/include/hardware_legacy/AudioHardwareBase.h b/include/hardware_legacy/AudioHardwareBase.h
+index b8b2b05..cdb557d 100644
+--- a/include/hardware_legacy/AudioHardwareBase.h
++++ b/include/hardware_legacy/AudioHardwareBase.h
+@@ -52,17 +52,58 @@ public:
+     virtual status_t dumpState(int fd, const Vector<String16>& args);
+ 
+ #ifdef MTK_HARDWARE
++        virtual status_t SetEMParameter(void *ptr , int len) ;
++        virtual status_t GetEMParameter(void *ptr , int len) ;
++        virtual status_t SetAudioCommand(int par1, int par2);
++        virtual status_t GetAudioCommand(int par1);
+     virtual status_t SetAudioData(int par1, size_t len, void *ptr);
+     virtual status_t GetAudioData(int par1, size_t len, void *ptr);
+-#endif
++        // add by Tina to set ACF Preview parameter
++        virtual status_t SetACFPreviewParameter(void *ptr , int len);
++        virtual status_t SetHCFPreviewParameter(void *ptr , int len);
++
++/*
++        // for open output stream with flag
++        virtual AudioStreamOut* openOutputStreamWithFlag(
++                                uint32_t devices,
++                                int *format=0,
++                                uint32_t *channels=0,
++                                uint32_t *sampleRate=0,
++                                status_t *status=0,
++                                uint32_t output_flag = 0);
++*/
++        /////////////////////////////////////////////////////////////////////////
++        //    for PCMxWay Interface API ...   Stan
++        /////////////////////////////////////////////////////////////////////////
++        virtual int xWayPlay_Start(int sample_rate);
++        virtual int xWayPlay_Stop(void);
++        virtual int xWayPlay_Write(void *buffer, int size_bytes);
++        virtual int xWayPlay_GetFreeBufferCount(void);
++        virtual int xWayRec_Start(int sample_rate);
++        virtual int xWayRec_Stop(void);
++        virtual int xWayRec_Read(void *buffer, int size_bytes);
++        //added by wendy
++        virtual int ReadRefFromRing(void*buf, uint32_t datasz,void* DLtime);
++        virtual int GetVoiceUnlockULTime(void* DLtime);
++        virtual int SetVoiceUnlockSRC(uint outSR, uint outChannel);
++        virtual bool startVoiceUnlockDL();
++        virtual bool stopVoiceUnlockDL();
++        virtual void freeVoiceUnlockDLInstance();
++        virtual int GetVoiceUnlockDLLatency();
++        virtual bool getVoiceUnlockDLInstance();
++
++
+ protected:
+     /** returns true if the given mode maps to a telephony or VoIP call is in progress */
+-    virtual bool     isModeInCall(int mode)
+-                        { return ((mode == AudioSystem::MODE_IN_CALL)
+-                                || (mode == AudioSystem::MODE_IN_COMMUNICATION)); };
++        virtual bool     isModeInCall(int mode) {
++            return ((mode == AudioSystem::MODE_IN_CALL) ||
++                    (mode == AudioSystem::MODE_IN_CALL_2) ||
++                    (mode == AudioSystem::MODE_IN_COMMUNICATION));
++        };
+     /** returns true if a telephony or VoIP call is in progress */
+     virtual bool     isInCall() { return isModeInCall(mMode); };
+     int              mMode;
++#endif
+ };
+ 
+ }; // namespace android
+diff --git a/include/hardware_legacy/AudioHardwareInterface.h b/include/hardware_legacy/AudioHardwareInterface.h
+index 1b98ce7..fb675a8 100644
+--- a/include/hardware_legacy/AudioHardwareInterface.h
++++ b/include/hardware_legacy/AudioHardwareInterface.h
+@@ -135,7 +135,10 @@ public:
+      * Return a recent count of the number of audio frames presented to an external observer.
+      */
+     virtual status_t    getPresentationPosition(uint64_t *frames, struct timespec *timestamp) = 0;
++#ifndef MTK_HARDWARE
++        virtual status_t    setCallBack(stream_callback_t callback, void *cookie)= 0;
+ 
++#endif
+ };
+ 
+ /**
+@@ -261,8 +264,45 @@ public:
+     virtual String8     getParameters(const String8& keys) = 0;
+ 
+ #ifdef MTK_HARDWARE
++    virtual status_t SetEMParameter(void *ptr , int len) =0;
++    virtual status_t GetEMParameter(void *ptr , int len) =0;
++    virtual status_t SetAudioCommand(int par1, int par2) =0;
++    virtual status_t GetAudioCommand(int par1)=0;
+     virtual status_t SetAudioData(int par1,size_t len,void *ptr)=0;
+     virtual status_t GetAudioData(int par1,size_t len,void *ptr)=0;
++
++    virtual status_t SetACFPreviewParameter(void *ptr , int len) =0;
++    virtual status_t SetHCFPreviewParameter(void *ptr , int len) =0;
++
++/*  
++  // for open output stream with flag
++    virtual AudioStreamOut* openOutputStreamWithFlag(
++                                uint32_t devices,
++                                int *format=0,
++                                uint32_t *channels=0,
++                                uint32_t *sampleRate=0,
++                                status_t *status=0,
++                                uint32_t output_flag = 0) =0;
++*/
++    /////////////////////////////////////////////////////////////////////////
++    //    for PCMxWay Interface API ...   Stan
++    /////////////////////////////////////////////////////////////////////////
++    virtual int xWayPlay_Start(int sample_rate) = 0;
++    virtual int xWayPlay_Stop(void) = 0;
++    virtual int xWayPlay_Write(void *buffer, int size_bytes) = 0;
++    virtual int xWayPlay_GetFreeBufferCount(void) = 0;
++    virtual int xWayRec_Start(int sample_rate) = 0;
++    virtual int xWayRec_Stop(void) = 0;
++    virtual int xWayRec_Read(void *buffer, int size_bytes) = 0;
++    //add by wendy
++    virtual int ReadRefFromRing(void*buf, uint32_t datasz,void* DLtime) =0;
++    virtual int GetVoiceUnlockULTime(void* DLtime) =0;
++    virtual int SetVoiceUnlockSRC(uint outSR, uint outChannel) = 0;
++    virtual bool startVoiceUnlockDL()= 0;
++    virtual bool stopVoiceUnlockDL() = 0;
++    virtual void freeVoiceUnlockDLInstance() = 0;
++    virtual int GetVoiceUnlockDLLatency() = 0;
++    virtual bool getVoiceUnlockDLInstance() = 0;
+ #endif
+     // Returns audio input buffer size according to parameters passed or 0 if one of the
+     // parameters is not supported
+diff --git a/include/hardware_legacy/AudioPolicyInterface.h b/include/hardware_legacy/AudioPolicyInterface.h
+index da03ee3..8755ba4 100644
+--- a/include/hardware_legacy/AudioPolicyInterface.h
++++ b/include/hardware_legacy/AudioPolicyInterface.h
+@@ -166,6 +166,9 @@ public:
+     virtual status_t    dump(int fd) = 0;
+ 
+     virtual bool isOffloadSupported(const audio_offload_info_t& offloadInfo) = 0;
++    #ifdef MTK_HARDWARE
++    virtual status_t  SetPolicyManagerParameters(int par1, int par2 , int par3 , int par4) =0;
++    #endif
+ };
+ 
+ 
+diff --git a/include/hardware_legacy/AudioPolicyManagerBase.h b/include/hardware_legacy/AudioPolicyManagerBase.h
+index 531a737..cae73b6 100644
+--- a/include/hardware_legacy/AudioPolicyManagerBase.h
++++ b/include/hardware_legacy/AudioPolicyManagerBase.h
+@@ -148,6 +148,9 @@ public:
+ 
+         virtual bool isOffloadSupported(const audio_offload_info_t& offloadInfo);
+ 
++#ifdef MTK_HARDWARE
++        virtual status_t SetPolicyManagerParameters(int par1,int par2 ,int par3,int par4);
++#endif
+ protected:
+ 
+         enum routing_strategy {
+diff --git a/include/hardware_legacy/AudioSystemLegacy.h b/include/hardware_legacy/AudioSystemLegacy.h
+index 257fed3..77375c7 100644
+--- a/include/hardware_legacy/AudioSystemLegacy.h
++++ b/include/hardware_legacy/AudioSystemLegacy.h
+@@ -62,11 +62,14 @@ enum audio_source {
+     AUDIO_SOURCE_CAMCORDER = 5,
+     AUDIO_SOURCE_VOICE_RECOGNITION = 6,
+     AUDIO_SOURCE_VOICE_COMMUNICATION = 7,
+-#ifdef QCOM_HARDWARE
+-    AUDIO_SOURCE_REMOTE_SUBMIX = 8,
+-    AUDIO_SOURCE_FM_RX = 9,
+-    AUDIO_SOURCE_FM_RX_A2DP = 10,
+-    AUDIO_SOURCE_MAX = AUDIO_SOURCE_FM_RX_A2DP,
++#ifdef MTK_HARDWARE
++	AUDIO_SOURCE_VOICE_UNLOCK =80,
++	AUDIO_SOURCE_CUSTOMIZATION1 =81,
++	AUDIO_SOURCE_CUSTOMIZATION2 =82,
++	AUDIO_SOURCE_CUSTOMIZATION3 =83,
++    AUDIO_SOURCE_MATV =98,
++    AUDIO_SOURCE_FM =99,
++    AUDIO_SOURCE_MAX = AUDIO_SOURCE_FM,
+ #else
+     AUDIO_SOURCE_MAX = AUDIO_SOURCE_VOICE_COMMUNICATION,
+ #endif
+@@ -89,8 +92,11 @@ public:
+         ENFORCED_AUDIBLE = 7, // Sounds that cannot be muted by user and must be routed to speaker
+         DTMF             = 8,
+         TTS              = 9,
+-#ifdef QCOM_HARDWARE
+-        INCALL_MUSIC     = 10,
++#ifdef MTK_HARDWARE
++        FM                = 10,
++        MATV            = 11,
++        BOOT            = 12, //only used for bootanimation and output from speakerand headset
++        VIBSPK          = 13, //only used for vibration signal
+ #endif
+         NUM_STREAM_TYPES
+     };
+@@ -99,6 +105,9 @@ public:
+     enum pcm_sub_format {
+         PCM_SUB_16_BIT          = 0x1, // must be 1 for backward compatibility
+         PCM_SUB_8_BIT           = 0x2, // must be 2 for backward compatibility
++#ifdef MTK_HARDWARE
++        PCM_SUB_VM                = 0x4
++#endif
+     };
+ 
+     enum audio_sessions {
+@@ -148,7 +157,10 @@ public:
+         SUB_FORMAT_MASK     = 0x00FFFFFF,
+         // Aliases
+         PCM_16_BIT          = (PCM|PCM_SUB_16_BIT),
+-        PCM_8_BIT          = (PCM|PCM_SUB_8_BIT)
++        PCM_8_BIT          = (PCM|PCM_SUB_8_BIT),
++#ifdef MTK_HARDWARE
++        VM_FMT               = (PCM|PCM_SUB_VM)
++#endif
+     };
+ 
+     enum audio_channels {
+@@ -225,6 +237,8 @@ public:
+         MODE_RINGTONE,
+         MODE_IN_CALL,
+         MODE_IN_COMMUNICATION,
++        MODE_IN_CALL_2,
++		MODE_IN_CALL_EXTERNAL,
+         NUM_MODES  // not a valid entry, denotes end-of-list
+     };
+ 
+@@ -254,54 +268,24 @@ public:
+         DEVICE_OUT_AUX_DIGITAL = 0x400,
+         DEVICE_OUT_ANLG_DOCK_HEADSET = 0x800,
+         DEVICE_OUT_DGTL_DOCK_HEADSET = 0x1000,
+-#ifdef QCOM_HARDWARE
+-        DEVICE_OUT_USB_ACCESSORY = 0x2000,
+-        DEVICE_OUT_USB_DEVICE = 0x4000,
+-        DEVICE_OUT_FM = 0x8000,
+-        DEVICE_OUT_FM_TX = 0x10000,
+-        DEVICE_OUT_ANC_HEADSET = 0x20000,
+-        DEVICE_OUT_ANC_HEADPHONE = 0x40000,
+-        DEVICE_OUT_PROXY = 0x80000,
+-        DEVICE_OUT_DEFAULT = DEVICE_OUT_SPEAKER,
+-#else
+         DEVICE_OUT_DEFAULT = 0x8000,
++#ifdef MTK_HARDWARE
++        DEVICE_OUT_FM_TX = 0x10000,
+ #endif
+         DEVICE_OUT_ALL = (DEVICE_OUT_EARPIECE | DEVICE_OUT_SPEAKER | DEVICE_OUT_WIRED_HEADSET |
+                 DEVICE_OUT_WIRED_HEADPHONE | DEVICE_OUT_BLUETOOTH_SCO | DEVICE_OUT_BLUETOOTH_SCO_HEADSET |
+                 DEVICE_OUT_BLUETOOTH_SCO_CARKIT | DEVICE_OUT_BLUETOOTH_A2DP | DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES |
+                 DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER | DEVICE_OUT_AUX_DIGITAL |
+                 DEVICE_OUT_ANLG_DOCK_HEADSET | DEVICE_OUT_DGTL_DOCK_HEADSET |
+-#ifdef QCOM_HARDWARE
+-                DEVICE_OUT_USB_ACCESSORY | DEVICE_OUT_USB_DEVICE |
+-                DEVICE_OUT_ANC_HEADSET | DEVICE_OUT_ANC_HEADPHONE |
+-                DEVICE_OUT_FM | DEVICE_OUT_FM_TX |
+-                DEVICE_OUT_PROXY | DEVICE_OUT_DEFAULT),
+-#else
+-                DEVICE_OUT_DEFAULT),
++#ifdef MTK_HARDWARE
++                DEVICE_OUT_FM_TX |
+ #endif
++                DEVICE_OUT_DEFAULT),
++
+         DEVICE_OUT_ALL_A2DP = (DEVICE_OUT_BLUETOOTH_A2DP | DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES |
+                 DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER),
+-#ifdef QCOM_HARDWARE
+-        DEVICE_OUT_ALL_USB = (DEVICE_OUT_USB_ACCESSORY | DEVICE_OUT_USB_DEVICE),
+-#endif
+ 
+         // input devices
+-#ifdef QCOM_HARDWARE
+-        DEVICE_IN_COMMUNICATION = 0x100000,
+-        DEVICE_IN_AMBIENT = 0x200000,
+-        DEVICE_IN_BUILTIN_MIC = 0x400000,
+-        DEVICE_IN_BLUETOOTH_SCO_HEADSET = 0x800000,
+-        DEVICE_IN_WIRED_HEADSET = 0x1000000,
+-        DEVICE_IN_AUX_DIGITAL = 0x2000000,
+-        DEVICE_IN_VOICE_CALL = 0x4000000,
+-        DEVICE_IN_BACK_MIC = 0x8000000,
+-        DEVICE_IN_ANC_HEADSET = 0x10000000,
+-        DEVICE_IN_FM_RX = 0x20000000,
+-        DEVICE_IN_FM_RX_A2DP = 0x40000000,
+-        DEVICE_IN_DEFAULT = DEVICE_IN_BUILTIN_MIC,
+-        DEVICE_IN_ANLG_DOCK_HEADSET = 0x80000000,
+-        DEVICE_IN_PROXY = DEVICE_IN_ANLG_DOCK_HEADSET,
+-#else
+         DEVICE_IN_COMMUNICATION = 0x10000,
+         DEVICE_IN_AMBIENT = 0x20000,
+         DEVICE_IN_BUILTIN_MIC = 0x40000,
+@@ -311,17 +295,18 @@ public:
+         DEVICE_IN_VOICE_CALL = 0x400000,
+         DEVICE_IN_BACK_MIC = 0x800000,
+         DEVICE_IN_DEFAULT = 0x80000000,
++#ifdef MTK_HARDWARE
++        DEVICE_IN_FM = 0x1000000,
++        DEVICE_IN_MATV= 0x2000000,
+ #endif
+ 
+         DEVICE_IN_ALL = (DEVICE_IN_COMMUNICATION | DEVICE_IN_AMBIENT | DEVICE_IN_BUILTIN_MIC |
+                 DEVICE_IN_BLUETOOTH_SCO_HEADSET | DEVICE_IN_WIRED_HEADSET | DEVICE_IN_AUX_DIGITAL |
+-#ifdef QCOM_HARDWARE
+-                DEVICE_IN_VOICE_CALL | DEVICE_IN_BACK_MIC | DEVICE_IN_ANC_HEADSET |
+-                DEVICE_IN_FM_RX | DEVICE_IN_FM_RX_A2DP | DEVICE_IN_DEFAULT |
+-                DEVICE_IN_ANLG_DOCK_HEADSET | DEVICE_IN_PROXY)
+-#else
+-                DEVICE_IN_VOICE_CALL | DEVICE_IN_BACK_MIC | DEVICE_IN_DEFAULT)
++                DEVICE_IN_VOICE_CALL | DEVICE_IN_BACK_MIC |
++#ifdef MTK_HARDWARE
++                DEVICE_IN_FM | DEVICE_IN_MATV |
+ #endif
++                DEVICE_IN_DEFAULT)
+     };
+ 
+     // request to open a direct output with getOutput() (by opposition to sharing an output with other AudioTracks)
+@@ -344,6 +329,9 @@ public:
+         FORCE_DIGITAL_DOCK,
+         FORCE_NO_BT_A2DP,
+         FORCE_SYSTEM_ENFORCED,
++#ifdef MTK_HARDWARE
++        FORCE_NO_SYSTEM_ENFORCED,
++#endif
+         NUM_FORCE_CONFIG,
+         FORCE_DEFAULT = FORCE_NONE
+     };
+@@ -355,6 +343,9 @@ public:
+         FOR_RECORD,
+         FOR_DOCK,
+         FOR_SYSTEM,
++#ifdef MTK_HARDWARE
++				FOR_PROPRIETARY,
++#endif         
+         NUM_FORCE_USE
+     };
+ 
+-- 
+2.15.1
+

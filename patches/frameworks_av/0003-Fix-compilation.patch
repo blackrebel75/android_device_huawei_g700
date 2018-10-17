@@ -1,0 +1,36 @@
+From d9cb00ceb1ae29d6105f22aaed2cc214e289f665 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Tue, 4 Apr 2017 01:59:04 +0200
+Subject: [PATCH 03/18] Fix compilation
+
+Change-Id: If71e7ca5676a46a659a74946bb62bd52b2ad695d
+---
+ media/libmediaplayerservice/MediaPlayerFactory.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/media/libmediaplayerservice/MediaPlayerFactory.cpp b/media/libmediaplayerservice/MediaPlayerFactory.cpp
+index 8b4d9e994..b0fbde669 100644
+--- a/media/libmediaplayerservice/MediaPlayerFactory.cpp
++++ b/media/libmediaplayerservice/MediaPlayerFactory.cpp
+@@ -395,15 +395,15 @@ class TestPlayerFactory : public MediaPlayerFactory::IFactory {
+ #ifdef MTK_HARDWARE
+ class FMPlayerFactory : public MediaPlayerFactory::IFactory {
+   public:
+-    virtual float scoreFactory(const sp<IMediaPlayer>& /*client*/,
++    virtual float scoreFactory(const sp<IMediaPlayer>& client,
+                                const char* url,
+-                               float /*curScore*/) {
++                               float curScore) {
+         if(strncmp(url, "MEDIATEK://MEDIAPLAYER_PLAYERTYPE_FM", 36) == 0)
+            return 1.0;
+         return 0.0;
+     }
+ 
+-    virtual sp<MediaPlayerBase> createPlayer(pid_t /* pid */) {
++    virtual sp<MediaPlayerBase> createPlayer() {
+         ALOGV("Create FM Player");
+         return new FMAudioPlayer();
+     }
+-- 
+2.15.1
+

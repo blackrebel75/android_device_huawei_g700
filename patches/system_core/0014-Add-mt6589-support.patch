@@ -1,0 +1,43 @@
+From ebbc47f1f0c048234d7491f489ea6bcab239b6f2 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 15 Feb 2017 10:39:10 +0100
+Subject: [PATCH 14/27] Add mt6589 support
+
+Change-Id: Ie8e7af6edb5ac7ff6d2b3ae844c73a0da3db9242
+---
+ init/Android.mk | 4 ++++
+ init/init.c     | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/init/Android.mk b/init/Android.mk
+index c6863bfb..0cff1e5a 100755
+--- a/init/Android.mk
++++ b/init/Android.mk
+@@ -46,6 +46,10 @@ ifneq ($(TARGET_NR_SVC_SUPP_GIDS),)
+ LOCAL_CFLAGS += -DNR_SVC_SUPP_GIDS=$(TARGET_NR_SVC_SUPP_GIDS)
+ endif
+ 
++ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
++LOCAL_CFLAGS += -DMTK_MT6589
++endif
++
+ LOCAL_MODULE:= init
+ 
+ LOCAL_FORCE_STATIC_EXECUTABLE := true
+diff --git a/init/init.c b/init/init.c
+index 5d9e752b..d5b053b6 100644
+--- a/init/init.c
++++ b/init/init.c
+@@ -770,6 +770,9 @@ static void export_kernel_boot_props(void)
+         { "ro.boot.mode", "ro.bootmode", "unknown", },
+         { "ro.boot.baseband", "ro.baseband", "unknown", },
+         { "ro.boot.bootloader", "ro.bootloader", "unknown", },
++#ifdef MTK_MT6589     
++        { "ro.boot.hardware",   "ro.hardware",   "mt6589", },
++#endif
+     };
+ 
+     for (i = 0; i < ARRAY_SIZE(prop_map); i++) {
+-- 
+2.15.1
+

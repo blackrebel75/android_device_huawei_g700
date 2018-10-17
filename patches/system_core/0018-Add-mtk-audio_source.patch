@@ -1,0 +1,33 @@
+From 3506c158bd084411cca59bdd46933bd510268ef4 Mon Sep 17 00:00:00 2001
+From: blackrebel <72fabio1@virgilio.it>
+Date: Wed, 19 Apr 2017 13:36:38 +0200
+Subject: [PATCH 18/27] Add mtk audio_source
+
+Change-Id: I32817c69aa8d5c93986f264bbea2fb1d6882a9eb
+---
+ include/system/audio.h | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/include/system/audio.h b/include/system/audio.h
+index 093da96e..e99a813c 100644
+--- a/include/system/audio.h
++++ b/include/system/audio.h
+@@ -153,6 +153,15 @@ typedef enum {
+ #ifdef QCOM_HARDWARE
+     AUDIO_SOURCE_FM_RX               = 10,
+     AUDIO_SOURCE_FM_RX_A2DP          = 11,
++#endif
++#ifdef MTK_HARDWARE
++    AUDIO_SOURCE_VOICE_UNLOCK = 80,
++    AUDIO_SOURCE_CUSTOMIZATION1 = 81,
++    AUDIO_SOURCE_CUSTOMIZATION2 = 82,
++    AUDIO_SOURCE_CUSTOMIZATION3 = 83,
++    AUDIO_SOURCE_ANC = 97,
++    AUDIO_SOURCE_MATV = 98,
++    AUDIO_SOURCE_FM = 99,
+ #endif
+     AUDIO_SOURCE_CNT,
+     AUDIO_SOURCE_MAX                 = AUDIO_SOURCE_CNT - 1,
+-- 
+2.15.1
+

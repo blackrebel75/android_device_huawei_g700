@@ -1,0 +1,136 @@
+From 95743e20c6e7efa38e5b085902c1667a523b75b0 Mon Sep 17 00:00:00 2001
+From: blackrebel75 <72fabio1@virgilio.it>
+Date: Thu, 21 Jun 2018 19:02:54 +0200
+Subject: [PATCH 9/9] Compatibility for mtk camera.
+
+---
+ include/ui/GraphicBuffer.h      |  6 ------
+ libs/ui/GraphicBuffer.cpp       | 35 +----------------------------------
+ libs/ui/GraphicBufferMapper.cpp |  6 ++++++
+ 3 files changed, 7 insertions(+), 40 deletions(-)
+
+diff --git a/include/ui/GraphicBuffer.h b/include/ui/GraphicBuffer.h
+index 26c553966..8de74cd41 100644
+--- a/include/ui/GraphicBuffer.h
++++ b/include/ui/GraphicBuffer.h
+@@ -169,12 +169,6 @@ private:
+ #ifdef MTK_MT6589
+ public:
+     status_t getIonFd(int *idx, int *num);
+-    unsigned int getMva() { return mva; }
+-    void setMva(unsigned int _mva);
+-
+-private:
+-    unsigned int mva;
+-    unsigned int msize;
+ #endif
+ };
+ 
+diff --git a/libs/ui/GraphicBuffer.cpp b/libs/ui/GraphicBuffer.cpp
+index 97c79abc1..8796219ed 100644
+--- a/libs/ui/GraphicBuffer.cpp
++++ b/libs/ui/GraphicBuffer.cpp
+@@ -27,9 +27,7 @@
+ #include <ui/GraphicBufferAllocator.h>
+ #include <ui/GraphicBufferMapper.h>
+ #include <ui/PixelFormat.h>
+-#ifdef MTK_MT6589
+-#define LOCK_FOR_VA (GRALLOC_USAGE_SW_READ_RARELY | GRALLOC_USAGE_SW_WRITE_NEVER | GRALLOC_USAGE_HW_TEXTURE)
+-#endif
++
+ namespace android {
+ 
+ // ===========================================================================
+@@ -53,10 +51,6 @@ GraphicBuffer::GraphicBuffer()
+     format = 
+     usage  = 0;
+     handle = NULL;
+-#ifdef MTK_MT6589
+-    mva    = 0;
+-    msize  = 0;
+-#endif
+ }
+ 
+ GraphicBuffer::GraphicBuffer(uint32_t w, uint32_t h,
+@@ -70,10 +64,6 @@ GraphicBuffer::GraphicBuffer(uint32_t w, uint32_t h,
+     format =
+     usage  = 0;
+     handle = NULL;
+-#ifdef MTK_MT6589
+-    mva    = 0;
+-    msize  = 0;
+-#endif
+     mInitCheck = initSize(w, h, reqFormat, reqUsage);
+ }
+ 
+@@ -90,10 +80,6 @@ GraphicBuffer::GraphicBuffer(uint32_t w, uint32_t h,
+     usage  = 0;
+     handle = NULL;
+     mInitCheck = initSize(w, h, reqFormat, reqUsage, bufferSize);
+-#ifdef MTK_MT6589
+-    mva = 0;
+-    msize = 0;
+-#endif
+ }
+ #endif
+ 
+@@ -110,13 +96,6 @@ GraphicBuffer::GraphicBuffer(uint32_t w, uint32_t h,
+     format = inFormat;
+     usage  = inUsage;
+     handle = inHandle;
+-#ifdef MTK_MT6589
+-    mva    = 0;
+-    msize  = 0;
+-
+-    ALOGI("create GraphicBuffer by existing handle (w:%d h%d f:%d) owner(%d)",
+-          stride, height, format, mOwner);
+-#endif
+ }
+ 
+ GraphicBuffer::GraphicBuffer(ANativeWindowBuffer* buffer, bool keepOwnership)
+@@ -130,13 +109,6 @@ GraphicBuffer::GraphicBuffer(ANativeWindowBuffer* buffer, bool keepOwnership)
+     format = buffer->format;
+     usage  = buffer->usage;
+     handle = buffer->handle;
+-#ifdef MTK_MT6589
+-    mva    = 0;
+-    msize  = 0;
+-
+-    ALOGI("create GraphicBuffer by existing native window buffer (w:%d h%d f:%d) owner(%d)",
+-          stride, height, format, mOwner);
+-#endif
+ }
+ 
+ GraphicBuffer::~GraphicBuffer()
+@@ -446,11 +418,6 @@ status_t GraphicBuffer::getIonFd(int *idx, int *num)
+     return getBufferMapper().getIonFd(handle, idx, num);
+ }
+ 
+-void GraphicBuffer::setMva(unsigned int _mva)
+-{
+-    mva = _mva;
+-
+-}
+ #endif
+ // ---------------------------------------------------------------------------
+ 
+diff --git a/libs/ui/GraphicBufferMapper.cpp b/libs/ui/GraphicBufferMapper.cpp
+index f9396070c..c771a4438 100644
+--- a/libs/ui/GraphicBufferMapper.cpp
++++ b/libs/ui/GraphicBufferMapper.cpp
+@@ -46,6 +46,12 @@ GraphicBufferMapper::GraphicBufferMapper()
+     if (err == 0) {
+         mAllocMod = (gralloc_module_t const *)module;
+     }
++#ifdef MTK_MT6589
++    mExtraDev = NULL;
++    if (err == 0) {
++        gralloc_extra_open(module, &mExtraDev);
++    }
++#endif
+ }
+ 
+ #ifdef MTK_MT6589
+-- 
+2.15.1
+
